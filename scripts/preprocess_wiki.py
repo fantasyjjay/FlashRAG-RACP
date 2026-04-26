@@ -5,6 +5,7 @@ import html
 import os
 import json
 import subprocess
+import sys
 from pathlib import Path
 import shutil
 from concurrent.futures import ThreadPoolExecutor
@@ -150,7 +151,6 @@ if __name__ == "__main__":
     parser.add_argument("--dump_path", type=str)
     parser.add_argument(
         "--use_chonkie",
-        type=bool,
         default=True,
         action="store_true",
     )
@@ -173,21 +173,21 @@ if __name__ == "__main__":
 
     # extract wiki dump
     temp_dir = os.path.join(Path(args.save_path).parent, "temp")
-    os.makedirs(temp_dir)
+    os.makedirs(temp_dir, exist_ok=True)
     subprocess.run(
         [
-            "python",
+            sys.executable,
             "-m",
             "wikiextractor.WikiExtractor",
             "--json",
-            "--filter_disambig_pages",
             "--quiet",
             "-o",
             temp_dir,
-            "--process",
+            "--processes",
             str(args.num_workers),
             args.dump_path,
-        ]
+        ],
+        check=True,
     )
 
     corpus = load_corpus(temp_dir)
@@ -293,7 +293,6 @@ if __name__ == "__main__":
     print("Start saving corpus...")
     with open(args.save_path, "w", encoding="utf-8") as f:
         for idx, item in enumerate(clean_corpus):
-            title = f"\"{item['title']}\""
-            item = {"id": idx, "title": title, "text": item["text"]}
+            item = {"id": str(idx), "contents": f"{item['title']}\n{item['text']}"}
             f.write(json.dumps(item) + "\n")
     print("Finish!")
