@@ -7,17 +7,22 @@ from flashrag.prompt import PromptTemplate
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_path", type=str)
 parser.add_argument("--retriever_path", type=str)
+parser.add_argument("--gpu_id", type=str, default="3")
 args = parser.parse_args()
 
 config_dict = {
-    "data_dir": "dataset/",
-    "index_path": "indexes/e5_Flat.index",
-    "corpus_path": "indexes/general_knowledge.jsonl",
-    "model2path": {"e5": args.retriever_path, "llama3-8B-instruct": args.model_path},
+    "gpu_id": args.gpu_id,
+    "data_dir": "/home/guanjunjie/my_datasets/FlashRAG_datasets/",
+    "index_path": "/home/guanjunjie/my_datasets/FlashRAG_datasets/indexes/test_e5/e5_Flat.index",
+    "corpus_path": "/home/guanjunjie/my_datasets/FlashRAG_datasets/retrieval-corpus/wiki18_100w_1k.jsonl",
+    "model2path": {
+        "e5": args.retriever_path,
+        "llama3-8B-instruct": args.model_path,
+    },
     "generator_model": "llama3-8B-instruct",
     "retrieval_method": "e5",
     "metrics": ["em", "f1", "acc"],
-    "retrieval_topk": 1,
+    "retrieval_topk": 5,
     "save_intermediate_data": True,
 }
 
@@ -43,4 +48,4 @@ print(output_dataset.pred)
 
 
 #python simple_pipeline.py --model_path /home/guanjunjie/my_models/Qwen2.5-7B-Instruct --retriever_path /home/guanjunjie/my_models/e5-base-v2
-# python simple_pipeline.py   --model_path /home/guanjunjie/my_models/Llama-3.1-8B-Instruct   --retriever_path /home/guanjunjie/my_models/e5-base-v2
+#python run_local_nq_1k.py --gpu_id 3 --model_path /home/guanjunjie/my_models/Llama-3.1-8B-Instruct --retriever_path /home/guanjunjie/my_models/e5-base-v2

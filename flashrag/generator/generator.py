@@ -390,16 +390,40 @@ class HFCausalLMGenerator(BaseGenerator):
 
         generation_params = resolve_max_tokens(params, generation_params, prioritize_new_tokens=True)
 
+        def clean_token_ids(token_ids):
+            if token_ids is None:
+                return []
+            if isinstance(token_ids, int):
+                return [token_ids] if token_ids >= 0 else []
+            if isinstance(token_ids, (list, tuple, set)):
+                cleaned = []
+                for token_id in token_ids:
+                    if isinstance(token_id, int) and token_id >= 0 and token_id not in cleaned:
+                        cleaned.append(token_id)
+                return cleaned
+            return []
+
         # set eos token for llama
         if "llama" in self.model_name.lower():
             extra_eos_tokens = [
                 self.tokenizer.eos_token_id,
                 self.tokenizer.convert_tokens_to_ids("<|eot_id|>"),
             ]
-            if "eos_token_id" in generation_params:
-                generation_params["eos_token_id"].extend(extra_eos_tokens)
+            eos_token_ids = clean_token_ids(generation_params.get("eos_token_id"))
+            for token_id in clean_token_ids(extra_eos_tokens):
+                if token_id not in eos_token_ids:
+                    eos_token_ids.append(token_id)
+            if eos_token_ids:
+                generation_params["eos_token_id"] = eos_token_ids
+
+        if "eos_token_id" in generation_params:
+            eos_token_ids = clean_token_ids(generation_params["eos_token_id"])
+            if eos_token_ids:
+                generation_params["eos_token_id"] = eos_token_ids
             else:
-                generation_params["eos_token_id"] = extra_eos_tokens
+                generation_params.pop("eos_token_id")
+        if generation_params.get("pad_token_id") is None:
+            generation_params.pop("pad_token_id", None)
 
         responses = []
         scores = []
@@ -418,6 +442,35 @@ class HFCausalLMGenerator(BaseGenerator):
                     truncation=True,
                     max_length=self.max_input_len,
                 ).to(self.model.device)
+                # ---- Qwen token fix ----
+                eos_id = getattr(self.model.generation_config, "eos_token_id", None)
+                eos_ids = clean_token_ids(eos_id)
+
+                if not eos_ids:
+                    if hasattr(self, "tokenizer"):
+                        im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+                        endoftext_id = self.tokenizer.convert_tokens_to_ids("<|endoftext|>")
+
+                        if isinstance(im_end_id, int) and im_end_id >= 0:
+                            eos_ids.append(im_end_id)
+
+                        if isinstance(endoftext_id, int) and endoftext_id >= 0 and endoftext_id not in eos_ids:
+                            eos_ids.append(endoftext_id)
+
+                        if not eos_ids and getattr(self.tokenizer, "eos_token_id", None) is not None:
+                            eos_ids.append(self.tokenizer.eos_token_id)
+
+                    if not eos_ids:
+                        eos_ids = [151645, 151643]
+
+                self.model.generation_config.eos_token_id = eos_ids
+
+                if getattr(self.model.generation_config, "pad_token_id", None) is None:
+                    if hasattr(self, "tokenizer") and getattr(self.tokenizer, "pad_token_id", None) is not None:
+                        self.model.generation_config.pad_token_id = self.tokenizer.pad_token_id
+                    else:
+                        self.model.generation_config.pad_token_id = 151643
+                # ---- end Qwen token fix ----
                 outputs = self.model.generate(
                     **inputs,
                     output_scores=True,
