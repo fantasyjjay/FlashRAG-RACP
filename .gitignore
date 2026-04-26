@@ -2,6 +2,9 @@ datasets/*
 indexes/*
 models/*
 results/*
+output/*
+examples/quick_start/output/*
+*.log
 tests/*
 webui_configs/*
 

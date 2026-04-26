@@ -1,8 +1,29 @@
 import os
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from pathlib import Path
 from flashrag.config import Config
 from flashrag.utils import get_dataset
 import argparse
+
+
+EXAMPLE_DIR = Path(__file__).resolve().parent
+CONFIG_PATH = EXAMPLE_DIR / "my_config.yaml"
+MODEL_DIR = Path.home() / "my_models"
+DATASET_DIR = Path.home() / "my_datasets" / "FlashRAG_datasets"
+INDEX_DIR = DATASET_DIR / "indexes"
+
+
+def local_model_path(name):
+    return str(MODEL_DIR / name)
+
+
+def method_data_path(*parts):
+    return str(EXAMPLE_DIR.joinpath(*parts))
+
+
+def load_config(config_dict):
+    return Config(str(CONFIG_PATH), config_dict)
 
 
 def naive(args):
@@ -12,7 +33,7 @@ def naive(args):
     from flashrag.pipeline import SequentialPipeline
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -26,7 +47,7 @@ def zero_shot(args):
     config_dict = {"save_note": save_note, "gpu_id": args.gpu_id, "dataset_name": args.dataset_name, "split": args.split}
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -54,11 +75,11 @@ def aar(args):
     # index path of this retriever
     retrieval_method = args.method_name
     if "contriever" in retrieval_method:
-        index_path = "aar-contriever_Flat.index"
+        index_path = str(INDEX_DIR / "aar-contriever" / "aar-contriever_Flat.index")
     else:
-        index_path = "aar-ance_Flat.index"
+        index_path = str(INDEX_DIR / "aar-ance" / "aar-ance_Flat.index")
 
-    model2path = {"AAR-contriever": "model/AAR-Contriever-KILT", "AAR-ANCE": "model/AAR-ANCE"}
+    model2path = {"AAR-contriever": local_model_path("AAR-Contriever-KILT"), "AAR-ANCE": local_model_path("AAR-ANCE")}
     model2pooling = {"AAR-contriever": "mean", "AAR-ANCE": "cls"}
     save_note = retrieval_method
     config_dict = {
@@ -73,7 +94,7 @@ def aar(args):
     }
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -94,7 +115,7 @@ def llmlingua(args):
         Official repo: https://github.com/microsoft/LLMLingua
     """
     refiner_name = "longllmlingua"  #
-    refiner_model_path = "model/llama-2-7b-hf"
+    refiner_model_path = local_model_path("Llama-2-7b-hf")
 
     config_dict = {
         "refiner_name": refiner_name,
@@ -116,7 +137,7 @@ def llmlingua(args):
     }
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -136,9 +157,12 @@ def recomp(args):
     # ###### Specified parameters ######
     refiner_name = "recomp-abstractive"  # recomp-extractive
     model_dict = {
-        "nq": "model/recomp_nq_abs",
-        "triviaqa": "model/recomp_tqa_abs",
-        "hotpotqa": "model/recomp_hotpotqa_abs",
+        "nq": local_model_path("recomp_nq_abs"),
+        "triviaqa": local_model_path("recomp_tqa_abs"),
+        "hotpotqa": local_model_path("recomp_hotpotqa_abs"),
+        "2wikimultihopqa": local_model_path("recomp_hotpotqa_abs"),
+        "popqa": local_model_path("recomp_nq_abs"),
+        "web_questions": local_model_path("recomp_nq_abs"),
     }
 
     refiner_model_path = model_dict.get(args.dataset_name, None)
@@ -164,7 +188,7 @@ def recomp(args):
     }
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -191,7 +215,7 @@ def sc(args):
             ```
     """
     refiner_name = "selective-context"
-    refiner_model_path = "model/gpt2"
+    refiner_model_path = local_model_path("gpt2")
 
     config_dict = {
         "refiner_name": refiner_name,
@@ -204,7 +228,7 @@ def sc(args):
     }
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -222,8 +246,8 @@ def retrobust(args):
         Official repo: https://github.com/oriyor/ret-robust
     """
     model_dict = {
-        "nq": "model/llama-2-13b-peft-nq-retrobust",
-        "2wiki": "model/llama-2-13b-peft-2wikihop-retrobust",
+        "nq": local_model_path("llama-2-13b-peft-nq-retrobust"),
+        "2wiki": local_model_path("llama-2-13b-peft-2wikihop-retrobust"),
     }
     if args.dataset_name in ["nq", "triviaqa", "popqa", "web_questions"]:
         lora_path = model_dict["nq"]
@@ -242,14 +266,15 @@ def retrobust(args):
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
     from flashrag.pipeline import SelfAskPipeline
     from flashrag.utils import selfask_pred_parse
 
-    pipeline = SelfAskPipeline(config, max_iter=5, single_hop=False)
+    single_hop = args.dataset_name in ["nq", "triviaqa", "popqa", "web_questions"]
+    pipeline = SelfAskPipeline(config, max_iter=5, single_hop=single_hop)
     # use specify prediction parse function
     result = pipeline.run(test_data, pred_process_fun=selfask_pred_parse)
 
@@ -262,7 +287,7 @@ def sure(args):
         Official repo: https://github.com/bbuing9/ICLR24_SuRe
     """
     config_dict = {"save_note": "SuRe", "gpu_id": args.gpu_id, "dataset_name": args.dataset_name, "split": args.split}
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -282,7 +307,7 @@ def replug(args):
     config_dict = {"save_note": save_note, "gpu_id": args.gpu_id, "dataset_name": args.dataset_name, "split": args.split}
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
     pred_process_fun = lambda x: x.split("\n")[0]
@@ -315,8 +340,8 @@ def skr(args):
 
     """
     judger_name = "skr"
-    model_path = "model/sup-simcse-bert-base-uncased"
-    training_data_path = "./sample_data/skr_training.json"
+    model_path = local_model_path("sup-simcse-bert-base-uncased")
+    training_data_path = method_data_path("sample_data", "skr_training.json")
 
     config_dict = {
         "judger_name": judger_name,
@@ -334,7 +359,7 @@ def skr(args):
     }
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -353,7 +378,7 @@ def selfrag(args):
     """
     config_dict = {
         "generator_model": "selfrag-llama2-7B",
-        "generator_model_path": "model/selfrag_llama2_7b",
+        "generator_model_path": local_model_path("selfrag_llama2_7b"),
         "framework": "vllm",
         "save_note": "self-rag",
         "gpu_id": args.gpu_id,
@@ -366,7 +391,7 @@ def selfrag(args):
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
 
     all_split = get_dataset(config)
     test_data = all_split[args.split]
@@ -399,7 +424,7 @@ def flare(args):
 
     """
     config_dict = {"save_note": "flare", "gpu_id": args.gpu_id, "dataset_name": args.dataset_name, "split": args.split}
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -427,7 +452,7 @@ def iterretgen(args):
         "split": args.split,
     }
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -449,11 +474,11 @@ def ircot(args):
     from flashrag.pipeline import IRCOTPipeline
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
     print(config["generator_model_path"])
-    pipeline = IRCOTPipeline(config, max_iter=5)
+    pipeline = IRCOTPipeline(config, max_iter=2)
 
     result = pipeline.run(test_data)
 
@@ -487,7 +512,7 @@ def trace(args):
     }
 
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
     from flashrag.pipeline import SequentialPipeline
@@ -508,15 +533,16 @@ def spring(args):
         "save_note": save_note,
         "gpu_id": args.gpu_id,
         "dataset_name": args.dataset_name,
+        "generator_model": "llama2-7B-chat",
         "framework": "hf",
         "split": args.split,
     }
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
     # download token embedding from: https://huggingface.co/yutaozhu94/SPRING
-    token_embedding_path = "llama2.7b.chat.added_token_embeddings.pt"
+    token_embedding_path = local_model_path("llama2.7b.chat.added_token_embeddings.pt")
 
     from flashrag.prompt import PromptTemplate
     from flashrag.pipeline import SequentialPipeline
@@ -542,7 +568,7 @@ def spring(args):
 
 def adaptive(args):
     judger_name = "adaptive-rag"
-    model_path = "illuminoplanet/adaptive-rag-classifier"
+    model_path = local_model_path("combined_flan_t5_xl_classifier")
 
     config_dict = {
         "judger_name": judger_name,
@@ -553,7 +579,7 @@ def adaptive(args):
         "split": args.split,
     }
     # preparation
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -574,13 +600,13 @@ def rqrag(args):
         'framework': 'vllm',
         'generator_max_input_len': 4096,
         'generation_params': {'max_tokens': 512, 'skip_special_tokens': False},
-        'generator_model_path': 'zorowin123/rq_rag_llama2_7B',
+        'generator_model_path': local_model_path('rq_rag_llama2_7B'),
         "dataset_name": args.dataset_name,
         "split": args.split,
         "max_depth": max_depth
     }
 
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     
     all_split = get_dataset(config)
     test_data = all_split[args.split]
@@ -601,12 +627,12 @@ def r1searcher(args):
         'framework': 'vllm',
         'generator_max_input_len': 16384,
         'generation_params': {'max_tokens': 512, 'skip_special_tokens': False},
-        'generator_model_path': 'XXsongLALA/Qwen-2.5-7B-base-RAG-RL',
+        'generator_model_path': local_model_path('Qwen-2.5-7B-base-RAG-RL'),
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
 
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     
     all_split = get_dataset(config)
     test_data = all_split[args.split]
@@ -627,12 +653,12 @@ def searchr1(args):
         'framework': 'vllm',
         'generator_max_input_len': 16384,
         'generation_params': {'max_tokens': 512, 'skip_special_tokens': False},
-        'generator_model_path':'PeterJinGo/SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo',
+        'generator_model_path': local_model_path('SearchR1-nq_hotpotqa_train-qwen2.5-7b-em-ppo'),
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
 
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
     
@@ -651,12 +677,12 @@ def autorefine(args):
         'framework': 'vllm',
         'generator_max_input_len': 16384,
         'generation_params': {'max_tokens': 512, 'skip_special_tokens': False},
-        'generator_model_path': 'yrshi/AutoRefine-Qwen2.5-3B-Base',
+        'generator_model_path': local_model_path('AutoRefine-Qwen2.5-3B-Base'),
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
 
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
     
@@ -677,12 +703,12 @@ def o2searcher(args):
         'retrieval_topk': 3,
         'generator_max_input_len': 16384,
         'generation_params': {'max_tokens': 512, 'skip_special_tokens': False},
-        'generator_model_path': 'Jianbiao/O2-Searcher-Qwen2.5-3B-GRPO',
+        'generator_model_path': local_model_path('O2-Searcher-Qwen2.5-3B-GRPO'),
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
 
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
     
@@ -702,12 +728,12 @@ def rearag(args):
         'is_reasoning': True,
         'generator_max_input_len': 8192 - 2 - 1024,
         'generation_params': {'max_tokens': 1024, 'do_sample': True},
-        'generator_model_path': 'THU-KEG/ReaRAG-9B',
+        'generator_model_path': local_model_path('ReaRAG-9B'),
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
 
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
     
@@ -733,12 +759,12 @@ def corag(args):
         'is_reasoning': True,
         'generator_max_input_len': 4096,
         'generation_params': {'max_tokens': 512, 'skip_special_tokens': False},
-        'generator_model_path': 'corag/CoRAG-Llama3.1-8B-MultihopQA',
+        'generator_model_path': local_model_path('CoRAG-Llama3.1-8B-MultihopQA'),
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
 
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
@@ -757,12 +783,12 @@ def simpledeepsearcher(args):
         'framework': 'vllm',
         'generator_max_input_len': 20480,
         'generation_params': {'max_tokens': 2048, 'skip_special_tokens': False},
-        'generator_model_path': 'RUC-AIBOX/Qwen-7B-SimpleDeepSearcher',
+        'generator_model_path': local_model_path('Qwen-7B-SimpleDeepSearcher'),
         "dataset_name": args.dataset_name,
         "split": args.split,
     }
 
-    config = Config("my_config.yaml", config_dict)
+    config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]   
 
