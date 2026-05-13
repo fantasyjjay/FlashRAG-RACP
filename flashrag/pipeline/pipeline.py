@@ -2,6 +2,7 @@ from flashrag.evaluator import Evaluator
 from flashrag.dataset.utils import split_dataset, merge_dataset
 from flashrag.utils import get_retriever, get_generator, get_refiner, get_judger
 from flashrag.prompt import PromptTemplate
+import numpy as np
 
 
 class BasicPipeline:
@@ -120,6 +121,103 @@ class SequentialPipeline(BasicPipeline):
         dataset.update_output("prompt", input_prompts)
 
         # delete used refiner to release memory
+        if self.refiner:
+            del self.refiner
+        pred_answer_list = self.generator.generate(input_prompts)
+        dataset.update_output("pred", pred_answer_list)
+
+        dataset = self.evaluate(dataset, do_eval=do_eval, pred_process_fun=pred_process_fun)
+
+        return dataset
+
+
+class RACPPipeline(SequentialPipeline):
+    """Selective-Context pipeline with Adaptive-k document cutoff.
+
+    RACP first retrieves a larger candidate set, estimates a per-query cutoff
+    from the largest adjacent score gap, and then sends only the selected
+    documents to the downstream refiner/generator.
+    """
+
+    def __init__(self, config, prompt_template=None, retriever=None, generator=None):
+        super().__init__(config, prompt_template, retriever=retriever, generator=generator)
+        racp_config = config["racp_config"] or {}
+        self.buffer = racp_config.get("buffer", 5)
+        self.search_ratio = racp_config.get("search_ratio", 0.9)
+
+    def _select_adaptive_docs(self, docs, scores):
+        if len(docs) <= 1:
+            return docs, len(docs), None
+
+        ranked = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
+        ranked_docs = [doc for doc, _ in ranked]
+        ranked_scores = [float(score) for _, score in ranked]
+
+        search_doc_num = int(np.ceil(len(ranked_scores) * self.search_ratio))
+        search_doc_num = min(len(ranked_scores), max(2, search_doc_num))
+        gap_search_scores = ranked_scores[:search_doc_num]
+        gaps = [
+            gap_search_scores[idx] - gap_search_scores[idx + 1]
+            for idx in range(len(gap_search_scores) - 1)
+        ]
+
+        gap_idx = int(np.argmax(gaps))
+        selected_k = min(len(ranked_docs), gap_idx + 1 + self.buffer)
+
+        return ranked_docs[:selected_k], selected_k, gap_idx
+
+    def run(self, dataset, do_eval=True, pred_process_fun=None):
+        input_query = dataset.question
+        retrieval_results, retrieval_scores = self.retriever.batch_search(input_query, return_score=True)
+        dataset.update_output("retrieval_result_full", retrieval_results)
+        dataset.update_output("retrieval_score_full", retrieval_scores)
+
+        selected_results = []
+        adaptive_ks = []
+        adaptive_gap_indices = []
+        for docs, scores in zip(retrieval_results, retrieval_scores):
+            selected_docs, selected_k, gap_idx = self._select_adaptive_docs(docs, scores)
+            selected_results.append(selected_docs)
+            adaptive_ks.append(selected_k)
+            adaptive_gap_indices.append(gap_idx)
+
+        dataset.update_output("retrieval_result", selected_results)
+        dataset.update_output("adaptive_k", adaptive_ks)
+        dataset.update_output("adaptive_gap_index", adaptive_gap_indices)
+
+        if self.refiner:
+            input_prompt_flag = self.refiner.input_prompt_flag
+            if "llmlingua" in self.refiner.name and input_prompt_flag:
+                input_prompts = [
+                    self.prompt_template.get_string(question=q, retrieval_result=r)
+                    for q, r in zip(dataset.question, dataset.retrieval_result)
+                ]
+                dataset.update_output("prompt", input_prompts)
+                input_prompts = self.refiner.batch_run(dataset)
+            else:
+                refine_results = self.refiner.batch_run(dataset)
+                dataset.update_output("refine_result", refine_results)
+                input_prompts = [
+                    self.prompt_template.get_string(question=q, formatted_reference=r)
+                    for q, r in zip(dataset.question, refine_results)
+                ]
+
+        else:
+            if not self.use_fid:
+                input_prompts = [
+                    self.prompt_template.get_string(question=q, retrieval_result=r)
+                    for q, r in zip(dataset.question, dataset.retrieval_result)
+                ]
+
+        if self.use_fid:
+            print("Use FiD generation")
+            input_prompts = []
+            for item in dataset:
+                q = item.question
+                docs = item.retrieval_result
+                input_prompts.append([q + " " + doc["contents"] for doc in docs])
+        dataset.update_output("prompt", input_prompts)
+
         if self.refiner:
             del self.refiner
         pred_answer_list = self.generator.generate(input_prompts)

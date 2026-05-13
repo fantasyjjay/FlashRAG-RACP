@@ -42,6 +42,61 @@ def naive(args):
     result = pipeline.run(test_data)
 
 
+def naive_no_rerank(args):
+    save_note = "naive-no-rerank"
+    config_dict = {
+        "save_note": save_note,
+        "use_reranker": False,
+        "retrieval_topk": 5,
+        "gpu_id": args.gpu_id,
+        "dataset_name": args.dataset_name,
+        "split": args.split,
+    }
+
+    from flashrag.pipeline import SequentialPipeline
+
+    config = load_config(config_dict)
+    all_split = get_dataset(config)
+    test_data = all_split[args.split]
+    if test_data is None:
+        available = sorted(p.stem for p in Path(config["dataset_path"]).glob("*.jsonl"))
+        raise FileNotFoundError(
+            f"Split '{args.split}' not found for dataset '{args.dataset_name}'. Available splits: {available}"
+        )
+
+    pipeline = SequentialPipeline(config)
+    result = pipeline.run(test_data)
+
+
+def reranker_test(args):
+    save_note = "reranker-top20-to-5"
+    config_dict = {
+        "save_note": save_note,
+        "use_reranker": True,
+        "retrieval_topk": 20,
+        "rerank_topk": 5,
+        "rerank_max_length": 256,
+        "rerank_batch_size": 4,
+        "gpu_id": args.gpu_id,
+        "dataset_name": args.dataset_name,
+        "split": args.split,
+    }
+
+    from flashrag.pipeline import SequentialPipeline
+
+    config = load_config(config_dict)
+    all_split = get_dataset(config)
+    test_data = all_split[args.split]
+    if test_data is None:
+        available = sorted(p.stem for p in Path(config["dataset_path"]).glob("*.jsonl"))
+        raise FileNotFoundError(
+            f"Split '{args.split}' not found for dataset '{args.dataset_name}'. Available splits: {available}"
+        )
+
+    pipeline = SequentialPipeline(config)
+    result = pipeline.run(test_data)
+
+
 def zero_shot(args):
     save_note = "zero-shot"
     config_dict = {"save_note": save_note, "gpu_id": args.gpu_id, "dataset_name": args.dataset_name, "split": args.split}
@@ -235,6 +290,42 @@ def sc(args):
     from flashrag.pipeline import SequentialPipeline
 
     pipeline = SequentialPipeline(config)
+    result = pipeline.run(test_data)
+
+
+def racp(args):
+    """
+    RACP: Selective-Context with Adaptive-k document cutoff.
+
+    It first retrieves 20 candidate documents, chooses a query-specific number
+    of documents by the largest similarity gap with a small buffer, and then
+    applies the same Selective-Context refiner as `sc`.
+    """
+    refiner_name = "selective-context"
+    refiner_model_path = local_model_path("gpt2")
+
+    config_dict = {
+        "refiner_name": refiner_name,
+        "refiner_model_path": refiner_model_path,
+        "retrieval_topk": 20,
+        "sc_config": {"reduce_ratio": 0.5},
+        "racp_config": {
+            "buffer": 5,
+            "search_ratio": 0.9,
+        },
+        "save_note": "racp",
+        "gpu_id": args.gpu_id,
+        "dataset_name": args.dataset_name,
+        "split": args.split,
+    }
+
+    config = load_config(config_dict)
+    all_split = get_dataset(config)
+    test_data = all_split[args.split]
+
+    from flashrag.pipeline import RACPPipeline
+
+    pipeline = RACPPipeline(config)
     result = pipeline.run(test_data)
 
 
@@ -810,10 +901,13 @@ if __name__ == "__main__":
         "AAR-contriever": aar,
         "AAR-ANCE": aar,
         "naive": naive,
+        "naive-no-rerank": naive_no_rerank,
+        "reranker-test": reranker_test,
         "zero-shot": zero_shot,
         "llmlingua": llmlingua,
         "recomp": recomp,
         "selective-context": sc,
+        "racp": racp,
         "ret-robust": retrobust,
         "sure": sure,
         "replug": replug,

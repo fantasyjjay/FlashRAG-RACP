@@ -7,7 +7,7 @@ examples/quick_start/output/*
 *.log
 tests/*
 webui_configs/*
-
+examples/methods/output/*
 !.gitkeep
 
 **/.history
