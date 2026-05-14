@@ -9,7 +9,7 @@ tests/*
 webui_configs/*
 examples/methods/output/*
 !.gitkeep
-
+racp/output/*
 **/.history
 *.pyc
 *.egg-info

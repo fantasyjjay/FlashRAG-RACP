@@ -144,6 +144,7 @@ class RACPPipeline(SequentialPipeline):
         racp_config = config["racp_config"] or {}
         self.buffer = racp_config.get("buffer", 5)
         self.search_ratio = racp_config.get("search_ratio", 0.9)
+        self.max_k = racp_config.get("max_k", None)
 
     def _select_adaptive_docs(self, docs, scores):
         if len(docs) <= 1:
@@ -163,6 +164,8 @@ class RACPPipeline(SequentialPipeline):
 
         gap_idx = int(np.argmax(gaps))
         selected_k = min(len(ranked_docs), gap_idx + 1 + self.buffer)
+        if self.max_k is not None:
+            selected_k = min(selected_k, self.max_k)
 
         return ranked_docs[:selected_k], selected_k, gap_idx
 

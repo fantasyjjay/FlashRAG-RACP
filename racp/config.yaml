@@ -34,7 +34,7 @@ method2index:
 # ------------------------------------------------Environment Settings------------------------------------------------#
 # Directory paths for data and outputs
 data_dir: "/home/guanjunjie/my_datasets/FlashRAG_datasets/"
-save_dir: "output/"
+save_dir: "racp/output/"
 
 gpu_id: "0,1,2,3"
 dataset_name: "nq" # name of the dataset in data_dir
@@ -59,7 +59,7 @@ faiss_gpu: False # whether use gpu to hold index
 corpus_path: "/home/guanjunjie/my_datasets/FlashRAG_datasets/retrieval-corpus/wiki18_100w.jsonl"  # path to corpus in '.jsonl' format that store the documents
 
 instruction: ~ # instruction for retrieval model
-retrieval_topk: 5 # number of retrieved documents
+retrieval_topk: 20 # number of retrieved documents
 retrieval_batch_size: 1024  # batch size for retrieval
 retrieval_use_fp16: True  # whether to use fp16 for retrieval model
 retrieval_query_max_length: 128  # max length of the query
@@ -72,7 +72,7 @@ use_reranker: True # whether to use reranker
 rerank_model_name: bge-reranker-v2-m3 # same as retrieval_method
 rerank_model_path: /home/guanjunjie/my_models/bge-reranker-v2-m3 # path to reranker model, path will be automatically find in `retriever_model2path`
 rerank_pooling_method: ~
-rerank_topk: 5  # number of remain documents after reranking
+rerank_topk: 20  # number of remain documents after reranking
 rerank_max_length: 256
 rerank_batch_size: 4 # batch size for reranker
 rerank_use_fp16: True
@@ -91,8 +91,8 @@ use_fid: False # whether to use FID, only valid in encoder-decoder model
 
 # -------------------------------------------------Refiner Settings------------------------------------------------#
 # If set, the refiner will be used to refine the retrieval documents.
-refiner_name: ~
-refiner_model_path: ~
+refiner_name: "selective-context"
+refiner_model_path: "/home/guanjunjie/my_models/gpt2"
 
 # Used for extractive method (e.g embedding models)
 refiner_topk: 5 # number of remain sentence after refiner
@@ -113,6 +113,10 @@ llmlingua_config:
   rank_method: 'longllmlingua'
 sc_config:
   'reduce_ratio': 0.5
+racp_config:
+  buffer: 5
+  max_k: 8
+  search_ratio: 0.9
 
 # -------------------------------------------------Evaluation Settings------------------------------------------------#
 # Metrics to evaluate the result

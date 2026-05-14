@@ -307,10 +307,13 @@ def racp(args):
     config_dict = {
         "refiner_name": refiner_name,
         "refiner_model_path": refiner_model_path,
+        "use_reranker": True,
         "retrieval_topk": 20,
+        "rerank_topk": 20,
         "sc_config": {"reduce_ratio": 0.5},
         "racp_config": {
             "buffer": 5,
+            "max_k": 8,
             "search_ratio": 0.9,
         },
         "save_note": "racp",
