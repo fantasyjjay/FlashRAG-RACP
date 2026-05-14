@@ -24,6 +24,46 @@ python racp/run_racp.py --dataset_name nq --split test --gpu_id 2
 nq_YYYY_MM_DD_HH_MM_racp/
 ```
 
+## 分段运行
+
+如果一张卡同时放不下 retriever、reranker、Selective-Context 和 Llama3，可以先只生成最终 prompt：
+
+```bash
+python racp/run_racp.py --stage prepare --dataset_name nq --split test --gpu_id 2
+```
+
+这一步会执行：
+
+```text
+检索 -> reranker -> RACP 动态 k -> Selective-Context -> final prompt
+```
+
+默认保存到当前输出目录的：
+
+```text
+prompt_cache.json
+```
+
+然后单独加载大模型生成和评测：
+
+```bash
+python racp/run_racp.py \
+  --stage generate \
+  --dataset_name nq \
+  --split test \
+  --gpu_id 2 \
+  --prompt_cache_path racp/output/nq_YYYY_MM_DD_HH_MM_racp/prompt_cache.json
+```
+
+`generate` 阶段不会再新建时间戳目录，`metric_score.txt` 和 `intermediate_data.json` 会写回 `prompt_cache.json` 所在的 prepare 目录。
+脚本会在 `generate` 阶段自动把 vLLM 的 worker 启动方式切到 `fork`，避免子进程重复执行入口脚本。
+
+完整一次跑完仍然使用默认的 `full`：
+
+```bash
+python racp/run_racp.py --stage full --dataset_name nq --split test --gpu_id 2
+```
+
 ## 常用消融
 
 当前较好的设置：
@@ -64,3 +104,5 @@ python racp/run_racp.py --dataset_name nq --split test --gpu_id 2 --gpu_memory_u
 - `--max_k`: 最终送入 Selective-Context/LLM 的文档上限，默认 8；传 `none` 表示不限制。
 - `--search_ratio`: 用前多少比例的重排分数搜索最大 gap，默认 0.9。
 - `--reduce_ratio`: Selective-Context 的压缩比例，默认 0.5。
+- `--stage`: 运行阶段，`full` 完整跑，`prepare` 只保存最终 prompt，`generate` 只读取 prompt 后生成和评测。
+- `--prompt_cache_path`: `generate` 阶段读取的 prompt cache 路径。
