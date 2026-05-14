@@ -16,10 +16,10 @@ def requested_stage():
     return "full"
 
 
-if requested_stage() == "generate":
-    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "fork"
-else:
+if requested_stage() == "prepare":
     os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+else:
+    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "fork"
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
@@ -70,6 +70,14 @@ def none_or_int(value):
 
 
 def build_config_dict(args):
+    if args.stage == "generate":
+        config_dict = {"disable_save": True}
+        if args.gpu_id is not None:
+            config_dict["gpu_id"] = args.gpu_id
+        if args.gpu_memory_utilization is not None:
+            config_dict["gpu_memory_utilization"] = args.gpu_memory_utilization
+        return config_dict
+
     config_dict = {
         "refiner_name": "selective-context",
         "refiner_model_path": str(args.refiner_model_path),
@@ -85,11 +93,9 @@ def build_config_dict(args):
         "save_note": args.save_note,
         "save_dir": str(args.save_dir),
         "gpu_id": args.gpu_id,
-        "dataset_name": args.dataset_name,
-        "split": args.split,
+        "dataset_name": args.dataset_name or "nq",
+        "split": args.split or "test",
     }
-    if args.stage == "generate":
-        config_dict["disable_save"] = True
 
     if args.test_sample_num is not None:
         config_dict["test_sample_num"] = args.test_sample_num
@@ -257,6 +263,11 @@ def run_generate(config, args):
 def run(args):
     from flashrag.pipeline import RACPPipeline
 
+    if args.stage == "generate" and args.prompt_cache_path is not None:
+        prompt_config_path = Path(args.prompt_cache_path).resolve().parent / "config.yaml"
+        if Path(args.config_path).resolve() == DEFAULT_CONFIG_PATH.resolve() and prompt_config_path.exists():
+            args.config_path = prompt_config_path
+
     config = Config(str(args.config_path), build_config_dict(args))
     if args.stage == "prepare":
         return run_prepare(config, args)
@@ -273,8 +284,8 @@ def parse_args():
     parser.add_argument("--stage", choices=["full", "prepare", "generate"], default="full")
     parser.add_argument("--prompt_cache_path", type=Path, default=None)
     parser.add_argument("--config_path", type=Path, default=DEFAULT_CONFIG_PATH)
-    parser.add_argument("--dataset_name", type=str, default="nq")
-    parser.add_argument("--split", type=str, default="test")
+    parser.add_argument("--dataset_name", type=str, default=None)
+    parser.add_argument("--split", type=str, default=None)
     parser.add_argument("--gpu_id", type=str, default="2")
     parser.add_argument("--save_dir", type=Path, default=DEFAULT_SAVE_DIR)
     parser.add_argument("--save_note", type=str, default="racp")

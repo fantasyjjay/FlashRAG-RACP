@@ -74,7 +74,7 @@ rerank_model_path: /home/guanjunjie/my_models/bge-reranker-v2-m3 # path to reran
 rerank_pooling_method: ~
 rerank_topk: 20  # number of remain documents after reranking
 rerank_max_length: 256
-rerank_batch_size: 8 # batch size for reranker
+rerank_batch_size: 4 # batch size for reranker
 rerank_use_fp16: True
 
 # -------------------------------------------------Generator Settings------------------------------------------------#

@@ -49,14 +49,13 @@ prompt_cache.json
 ```bash
 python racp/run_racp.py \
   --stage generate \
-  --dataset_name nq \
-  --split test \
   --gpu_id 2 \
   --prompt_cache_path racp/output/nq_YYYY_MM_DD_HH_MM_racp/prompt_cache.json
 ```
 
 `generate` 阶段不会再新建时间戳目录，`metric_score.txt` 和 `intermediate_data.json` 会写回 `prompt_cache.json` 所在的 prepare 目录。
-脚本会在 `generate` 阶段自动把 vLLM 的 worker 启动方式切到 `fork`，避免子进程重复执行入口脚本。
+脚本会在 `full` 和 `generate` 阶段自动把 vLLM 的 worker 启动方式切到 `fork`，避免子进程重复执行入口脚本。
+如果 cache 同目录存在 `config.yaml`，`generate` 阶段会默认读取那份配置，因此 HotpotQA 等数据集第二阶段只需要传 `--gpu_id` 和 `--prompt_cache_path`。
 
 完整一次跑完仍然使用默认的 `full`：
 
