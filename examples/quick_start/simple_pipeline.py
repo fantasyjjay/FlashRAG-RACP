@@ -13,7 +13,7 @@ config_dict = {
     "data_dir": "dataset/",
     "index_path": "indexes/e5_Flat.index",
     "corpus_path": "indexes/general_knowledge.jsonl",
-    "model2path": {"e5": args.retriever_path, "llama3-8B-instruct": args.model_path},
+    "model2path": {"e5": "/home/guanjunjie/my_models/e5-base-v2", "llama3-8B-instruct": "/home/guanjunjie/my_modelsMeta-Llama-3-8B-Instruct"},
     "generator_model": "llama3-8B-instruct",
     "retrieval_method": "e5",
     "metrics": ["em", "f1", "acc"],
