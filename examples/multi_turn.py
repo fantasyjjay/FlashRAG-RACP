@@ -1,5 +1,5 @@
 """
-A simple case to use generator for multi-turn interaction
+A simple case to use generator for multi-turn interaction  是测试
 """
 import argparse
 from flashrag.config import Config
