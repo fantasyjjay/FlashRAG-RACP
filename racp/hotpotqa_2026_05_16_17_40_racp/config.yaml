@@ -1,0 +1,163 @@
+model2path:
+    e5: /home/guanjunjie/my_models/e5-base-v2
+    bge: /home/guanjunjie/my_models/bge-base-en-v1.5
+    contriever: /home/guanjunjie/my_models/contriever
+    llama2-7B-chat: /home/guanjunjie/my_models/Llama-2-7b-chat-hf
+    llama2-7B: /home/guanjunjie/my_models/Llama-2-7b-hf
+    llama2-13B: /home/guanjunjie/my_models/Llama-2-13b-hf
+    llama2-13B-chat: /home/guanjunjie/my_models/Llama-2-13b-chat-hf
+    llama3-8B-instruct: /home/guanjunjie/my_models/Meta-Llama-3-8B-Instruct
+    qwen2.5-1.5B-instruct: /home/guanjunjie/my_models/Qwen2.5-1.5B-Instruct
+    qwen2.5-3B-instruct: /home/guanjunjie/my_models/Qwen2.5-3B-Instruct
+    Llama-3.2-3B-Instruct: /home/guanjunjie/my_models/Llama-3.2-3B-Instruct
+    bge-reranker-v2-m3: /home/guanjunjie/my_models/bge-reranker-v2-m3
+    gpt2: /home/guanjunjie/my_models/gpt2
+    bge-reranker-base: /home/guanjunjie/my_models/bge-reranker-base
+    ms-marco-MiniLM-L6-v2: /home/guanjunjie/my_models/ms-marco-MiniLM-L6-v2
+    Qwen3-Reranker-0.6B: /home/guanjunjie/my_models/Qwen3-Reranker-0.6B
+model2pooling:
+    e5: mean
+    bge: cls
+    contriever: mean
+    jina: mean
+    dpr: cls
+method2index:
+    e5: /home/guanjunjie/my_datasets/FlashRAG_datasets/indexes/wiki18_100w_e5/e5_Flat.index
+    bm25: null
+    contriever: null
+    clip:
+        text: path/to/text_index
+        image: path/to/image_index
+data_dir: /home/guanjunjie/my_datasets/FlashRAG_datasets/
+save_dir: /home/guanjunjie/jayj/FlashRAG/racp/output/hotpotqa_2026_05_16_17_40_racp
+gpu_id: '4'
+dataset_name: hotpotqa
+split:
+- dev
+test_sample_num: 1000
+random_sample: false
+seed: 2024
+save_intermediate_data: true
+save_note: racp
+is_reasoning: false
+retrieval_method: e5
+retrieval_model_path: /home/guanjunjie/my_models/e5-base-v2
+index_path: /home/guanjunjie/my_datasets/FlashRAG_datasets/indexes/wiki18_100w_e5/e5_Flat.index
+multimodal_index_path_dict: null
+faiss_gpu: false
+corpus_path: /home/guanjunjie/my_datasets/FlashRAG_datasets/retrieval-corpus/wiki18_100w.jsonl
+instruction: null
+retrieval_topk: 20
+retrieval_batch_size: 1024
+retrieval_use_fp16: true
+retrieval_query_max_length: 128
+save_retrieval_cache: false
+use_retrieval_cache: false
+retrieval_cache_path: null
+retrieval_pooling_method: mean
+bm25_backend: bm25s
+use_sentence_transformer: false
+silent_retrieval: true
+seismic_query_cut: 10
+seismic_heap_factor: 0.8
+use_reranker: true
+rerank_model_name: bge-reranker-v2-m3
+rerank_model_path: /home/guanjunjie/my_models/bge-reranker-v2-m3
+rerank_pooling_method: cls
+rerank_topk: 20
+rerank_max_length: 256
+rerank_batch_size: 4
+rerank_use_fp16: true
+use_multi_retriever: false
+multi_retriever_setting:
+    merge_method: concat
+    topk: 5
+    rerank_model_name: null
+    rerank_model_path: null
+    retriever_list:
+    -   retrieval_method: e5
+        retrieval_topk: 5
+        index_path: /home/guanjunjie/my_datasets/FlashRAG_datasets/indexes/wiki18_100w_e5/e5_Flat.index
+        retrieval_model_path: /home/guanjunjie/my_models/e5-base-v2
+        instruction: null
+        bm25_backend: bm25s
+        use_reranker: false
+        corpus_path: null
+        use_sentence_transformer: false
+        retrieval_pooling_method: mean
+        retrieval_use_fp16: true
+        retrieval_query_max_length: 128
+        faiss_gpu: false
+        retrieval_batch_size: 1024
+        rerank_model_name: bge-reranker-v2-m3
+        rerank_model_path: /home/guanjunjie/my_models/bge-reranker-v2-m3
+        retrieval_cache_path: null
+        save_retrieval_cache: false
+        use_retrieval_cache: false
+    -   retrieval_method: bm25
+        retrieval_topk: 5
+        index_path: null
+        retrieval_model_path: bm25
+        instruction: null
+        bm25_backend: bm25s
+        use_reranker: false
+        corpus_path: null
+        use_sentence_transformer: false
+        retrieval_pooling_method: mean
+        retrieval_use_fp16: true
+        retrieval_query_max_length: 128
+        faiss_gpu: false
+        retrieval_batch_size: 1024
+        rerank_model_name: bge-reranker-v2-m3
+        rerank_model_path: /home/guanjunjie/my_models/bge-reranker-v2-m3
+        retrieval_cache_path: null
+        save_retrieval_cache: false
+        use_retrieval_cache: false
+framework: vllm
+generator_model: llama3-8B-instruct
+openai_setting:
+    api_key: null
+    base_url: null
+generator_model_path: /home/guanjunjie/my_models/Meta-Llama-3-8B-Instruct
+generator_max_input_len: 4096
+generator_batch_size: 2
+generation_params:
+    max_tokens: 32
+    do_sample: false
+use_fid: false
+gpu_memory_utilization: 0.75
+metrics:
+- em
+- f1
+- acc
+- precision
+- recall
+- retrieval_recall
+metric_setting:
+    retrieval_recall_topk: 5
+    tokenizer_name: gpt-4
+save_metric_score: true
+refiner_name: selective-context
+refiner_model_path: /home/guanjunjie/my_models/gpt2
+refiner_topk: 5
+refiner_pooling_method: mean
+refiner_encode_max_length: 256
+refiner_max_input_length: 1024
+refiner_max_output_length: 512
+llmlingua_config:
+    rate: 0.55
+    condition_in_question: after_condition
+    reorder_context: sort
+    dynamic_context_compression_ratio: 0.3
+    condition_compare: true
+    context_budget: '+100'
+    rank_method: longllmlingua
+sc_config:
+    reduce_ratio: 0.5
+racp_config:
+    buffer: 5
+    max_k: 8
+    search_ratio: 0.9
+dataset_path: /home/guanjunjie/my_datasets/FlashRAG_datasets/hotpotqa
+gpu_num: 1
+device: cuda

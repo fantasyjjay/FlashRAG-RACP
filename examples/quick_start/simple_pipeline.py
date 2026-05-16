@@ -19,6 +19,7 @@ config_dict = {
     "metrics": ["em", "f1", "acc"],
     "retrieval_topk": 1,
     "save_intermediate_data": True,
+    "gpu_id": 4
 }
 
 config = Config(config_dict=config_dict)
