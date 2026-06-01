@@ -14,7 +14,7 @@
 
 ```bash
 conda activate flashrag
-export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+              
 python racp/run_racp.py --dataset_name nq --split test --gpu_id 2
 ```
 

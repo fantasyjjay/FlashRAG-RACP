@@ -9,18 +9,25 @@ model2path:
   llama2-13B: "/home/guanjunjie/my_models/Llama-2-13b-hf"
   llama2-13B-chat: "/home/guanjunjie/my_models/Llama-2-13b-chat-hf"
   llama3-8B-instruct: "/home/guanjunjie/my_models/Meta-Llama-3-8B-Instruct"
+  Llama-3.1-8B-Instruct: "/home/guanjunjie/my_models/Llama-3.1-8B-Instruct"
   qwen2.5-1.5B-instruct: "/home/guanjunjie/my_models/Qwen2.5-1.5B-Instruct"
   qwen2.5-3B-instruct: "/home/guanjunjie/my_models/Qwen2.5-3B-Instruct"
   Llama-3.2-3B-Instruct: "/home/guanjunjie/my_models/Llama-3.2-3B-Instruct"
   bge-reranker-v2-m3: "/home/guanjunjie/my_models/bge-reranker-v2-m3"
+  bge-reranker-large: "/home/guanjunjie/my_models/bge-reranker-large"
   gpt2: "/home/guanjunjie/my_models/gpt2"
   bge-reranker-base: "/home/guanjunjie/my_models/bge-reranker-base"
   ms-marco-MiniLM-L6-v2: "/home/guanjunjie/my_models/ms-marco-MiniLM-L6-v2"
   Qwen3-Reranker-0.6B: "/home/guanjunjie/my_models/Qwen3-Reranker-0.6B"
+  DeBERTa-v3-base-mnli-fever-anli: "/home/guanjunjie/my_models/DeBERTa-v3-base-mnli-fever-anli"
+  DeBERTa-v3-large-mnli-fever-anli-ling-wanli: "/home/guanjunjie/my_models/DeBERTa-v3-large-mnli-fever-anli-ling-wanli"
+  bge-large-en-v1.5: "/home/guanjunjie/my_models/bge-large-en-v1.5"
+  
 # Pooling methods for each embedding model
 model2pooling:
   e5: "mean"
   bge: "cls"
+  bge-large-en-v1.5: "cls"
   contriever: "mean"
   jina: 'mean'
   dpr: cls
@@ -28,6 +35,7 @@ model2pooling:
 # Indexes path for retrieval models
 method2index:
   e5: "/home/guanjunjie/my_datasets/FlashRAG_datasets/indexes/wiki18_100w_e5/e5_Flat.index"
+  bge-large-en-v1.5: "/home/guanjunjie/my_datasets/FlashRAG_datasets/indexes/wiki18_100w_bge-large-en-v1.5/bge-large-en-v1.5_Flat.index"
   bm25: ~
   contriever: ~
 
@@ -37,11 +45,11 @@ data_dir: "/home/guanjunjie/my_datasets/FlashRAG_datasets/"
 save_dir: "racp/output/"
 
 gpu_id: "0,1,2,3"
-dataset_name: "nq" # name of the dataset in data_dir
-split: [ "test" ]  # dataset split to load (e.g. train,dev,test)
+dataset_name: "hotpotqa" # name of the dataset in data_dir
+split: [ "dev" ]  # dataset split to load (e.g. train,dev,test)
 
 # Sampling configurations for testing
-test_sample_num: 1000  # number of samples to test (only work in dev/test split), if None, test all samples
+test_sample_num: ~  # number of samples to test (only work in dev/test split), if None, test all samples
 random_sample: False # whether to randomly sample the test samples
 
 # Seed for reproducibility
@@ -53,7 +61,7 @@ save_note: 'experiment'
 
 # -------------------------------------------------Retrieval Settings------------------------------------------------#
 # If set the name, the model path will be find in global paths
-retrieval_method: "e5"  # name or path of the retrieval model. 
+retrieval_method: "bge-large-en-v1.5"  # name or path of the retrieval model. 
 index_path: ~ # set automatically if not provided. 
 faiss_gpu: False # whether use gpu to hold index
 corpus_path: "/home/guanjunjie/my_datasets/FlashRAG_datasets/retrieval-corpus/wiki18_100w.jsonl"  # path to corpus in '.jsonl' format that store the documents
@@ -69,8 +77,8 @@ retrieval_cache_path: ~ # path to the retrieval cache
 retrieval_pooling_method: ~ # set automatically if not provided
 
 use_reranker: True # whether to use reranker
-rerank_model_name: bge-reranker-v2-m3 # same as retrieval_method
-rerank_model_path: /home/guanjunjie/my_models/bge-reranker-v2-m3 # path to reranker model, path will be automatically find in `retriever_model2path`
+rerank_model_name: bge-reranker-large # same as retrieval_method
+rerank_model_path: /home/guanjunjie/my_models/bge-reranker-large # path to reranker model, path will be automatically find in `retriever_model2path`
 rerank_pooling_method: ~
 rerank_topk: 20  # number of remain documents after reranking
 rerank_max_length: 256
@@ -79,7 +87,7 @@ rerank_use_fp16: True
 
 # -------------------------------------------------Generator Settings------------------------------------------------#
 framework: vllm # inference frame work of LLM, supporting: 'hf','vllm','fschat'
-generator_model: "llama3-8B-instruct" # name or path of the generator model
+generator_model: "Llama-3.1-8B-Instruct" # name or path of the generator model
 generator_max_input_len: 4096  # max length of the input, matching benchmark_result.xlsx
 generator_batch_size: 2 # batch size for generation, invalid for vllm
 gpu_memory_utilization: 0.75 # leave room for reranker on 24GB GPUs
@@ -123,5 +131,5 @@ racp_config:
 metrics: [ 'em','f1','acc','precision','recall','retrieval_recall']
 # Specify setting for metric, will be called within certain metrics
 metric_setting:
-  retrieval_recall_topk: 5
+  retrieval_recall_topk: 10
 save_metric_score: True #　whether to save the metric score into txt file
