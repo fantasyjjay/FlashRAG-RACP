@@ -126,7 +126,7 @@ racp_config:
   max_k: 8
   search_ratio: 0.9
 
-# EFC-RAG is enabled through --enable_efc_rag. The CLI values override this block.
+# run_racp.py defaults to EFC-RAG. CLI values override this reference block.
 efc_rag_config:
   enabled: False
   force_route: auto
@@ -150,6 +150,7 @@ efc_rag_config:
   use_centroid_router: False
   save_efc_debug: False
   probe_max_tokens: 128
+  planner_inference_batch_size: 8
 
 # -------------------------------------------------Evaluation Settings------------------------------------------------#
 # Metrics to evaluate the result

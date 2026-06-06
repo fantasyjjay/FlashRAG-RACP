@@ -62,6 +62,43 @@ from racp.efc import (
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "config.yaml"
 DEFAULT_SAVE_DIR = PROJECT_DIR / "output"
+
+# Main experiment defaults. Edit this block to change the no-argument run.
+# Explicit CLI arguments always take precedence.
+DEFAULT_RUN_CONFIG = {
+    "method": "efc",
+    "stage": "prepare",
+    "dataset_name": "hotpotqa",
+    "split": "dev",
+    "gpu_id": "3",
+    "save_note": "efc-hotpotqa-full",
+    "test_sample_num": None,
+    # GPU and batching
+    "retrieval_batch_size": 1024,
+    "prepare_gpu_memory_utilization": 0.75,
+    "generate_gpu_memory_utilization": 0.85,
+    "planner_batch_size": 32,
+    "planner_inference_batch_size": 8,
+    # Retrieval cache. Set a path and enable reuse for repeated experiments.
+    "use_retrieval_cache": False,
+    "save_retrieval_cache": True,
+    "retrieval_cache_path": None,
+    # EFC retrieval and generation
+    "initial_topk": 20,
+    "probe_topk": 5,
+    "probe_max_tokens": 128,
+    "final_topk": 5,
+    "qd_num": 2,
+    "qd_topk": 5,
+    "gen_topk": 10,
+    "planner_model": "Llama-3.1-8B-Instruct",
+    "planner_max_tokens": 96,
+    "missing_query_mode": "heuristic",
+    "enable_generation_guided": True,
+    "enable_static_qd_fallback": True,
+    "title_dedup_soft": True,
+}
+
 PLANNER_STOP_WORDS = [
     "<|eot_id|>",
     "\nQuestion:",
@@ -255,6 +292,7 @@ def build_config_dict(args):
         return config_dict
 
     config_dict = {
+        "experiment_method": args.method,
         "refiner_name": None,
         "refiner_model_path": None,
         "use_reranker": not args.no_reranker,
@@ -304,6 +342,7 @@ def build_config_dict(args):
         else None,
         "save_retrieval_cache": args.save_retrieval_cache,
         "use_retrieval_cache": args.use_retrieval_cache or args.retrieval_cache_only,
+        "retrieval_batch_size": args.retrieval_batch_size,
         "gpu_id": args.gpu_id,
     }
     if args.rerank_model_name is not None:
@@ -386,6 +425,7 @@ def build_config_dict(args):
             else None,
             "planner_gpu_memory_utilization": args.planner_gpu_memory_utilization,
             "planner_batch_size": args.planner_batch_size,
+            "planner_inference_batch_size": args.planner_inference_batch_size,
             "planner_max_tokens": args.planner_max_tokens,
             "probe_max_tokens": args.probe_max_tokens,
         }
@@ -1785,8 +1825,8 @@ def build_efc_planner_config(config):
     # The retriever has already initialized CUDA by this point. HF avoids vLLM
     # switching to spawn and re-executing the experiment entrypoint.
     planner_config["framework"] = "hf"
-    planner_config["generator_batch_size"] = min(
-        8, int((config["efc_rag_config"] or {}).get("planner_batch_size", 8))
+    planner_config["generator_batch_size"] = int(
+        (config["efc_rag_config"] or {}).get("planner_inference_batch_size", 8)
     )
     return planner_config
 
@@ -3526,9 +3566,16 @@ def run(args):
         )
     if args.retrieval_cache_only and args.retrieval_cache_path is None:
         raise ValueError("--retrieval_cache_only requires --retrieval_cache_path.")
-    for arg_name in ("planner_batch_size", "planner_max_tokens"):
+    for arg_name in (
+        "retrieval_batch_size",
+        "planner_batch_size",
+        "planner_inference_batch_size",
+        "planner_max_tokens",
+    ):
         if getattr(args, arg_name) < 1:
             raise ValueError(f"--{arg_name} must be positive.")
+    if not 0 < args.gpu_memory_utilization <= 1:
+        raise ValueError("--gpu_memory_utilization must be in (0, 1].")
     if args.qd_subquery_rerank_weight < 0:
         raise ValueError("--qd_subquery_rerank_weight must be non-negative.")
     answer_prompt_flags = [
@@ -3599,18 +3646,56 @@ def run(args):
         return run_full(config, args)
 
 
+def apply_method_defaults(args):
+    legacy_methods = [
+        method
+        for method, enabled in (
+            ("rs_mhr", args.enable_rs_mhr),
+            ("efc", args.enable_efc_rag),
+            ("qd", args.use_query_decomposition),
+        )
+        if enabled
+    ]
+    if legacy_methods:
+        if len(legacy_methods) == 1:
+            args.method = legacy_methods[0]
+        return args
+
+    args.enable_efc_rag = args.method == "efc"
+    args.enable_rs_mhr = args.method == "rs_mhr"
+    args.use_query_decomposition = args.method == "qd"
+    return args
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Run the standalone RACP experiment.")
-    parser.add_argument("--stage", choices=["full", "prepare", "generate"], default="full")
+    parser.add_argument(
+        "--method",
+        choices=["efc", "racp", "rs_mhr", "qd"],
+        default=DEFAULT_RUN_CONFIG["method"],
+        help="Experiment flow. The default no-argument run uses EFC-RAG.",
+    )
+    parser.add_argument(
+        "--stage",
+        choices=["full", "prepare", "generate"],
+        default=DEFAULT_RUN_CONFIG["stage"],
+    )
     parser.add_argument("--prompt_cache_path", type=Path, default=None)
     parser.add_argument("--config_path", type=Path, default=DEFAULT_CONFIG_PATH)
-    parser.add_argument("--dataset_name", type=str, default=None)
-    parser.add_argument("--split", type=str, default=None)
-    parser.add_argument("--gpu_id", type=str, default="2")
+    parser.add_argument(
+        "--dataset_name", type=str, default=DEFAULT_RUN_CONFIG["dataset_name"]
+    )
+    parser.add_argument("--split", type=str, default=DEFAULT_RUN_CONFIG["split"])
+    parser.add_argument("--gpu_id", type=str, default=DEFAULT_RUN_CONFIG["gpu_id"])
     parser.add_argument("--save_dir", type=Path, default=DEFAULT_SAVE_DIR)
-    parser.add_argument("--save_note", type=str, default="racp")
+    parser.add_argument("--save_note", type=str, default=DEFAULT_RUN_CONFIG["save_note"])
 
     parser.add_argument("--retrieval_topk", type=int, default=20)
+    parser.add_argument(
+        "--retrieval_batch_size",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["retrieval_batch_size"],
+    )
     parser.add_argument("--rerank_topk", type=int, default=20)
     parser.add_argument("--no_reranker", action="store_true")
     parser.add_argument("--rerank_model_name", type=str, default=None)
@@ -3632,13 +3717,41 @@ def parse_args():
     parser.add_argument("--subquery_topk", type=int, default=5)
     parser.add_argument("--qd_rerank_with_subqueries", action="store_true")
     parser.add_argument("--qd_subquery_rerank_weight", type=float, default=0.25)
-    parser.add_argument("--planner_max_tokens", type=int, default=96)
+    parser.add_argument(
+        "--planner_max_tokens",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["planner_max_tokens"],
+    )
     parser.add_argument("--load_retrieval_topk_cache_path", type=Path, default=None)
     parser.add_argument("--save_retrieval_topk_cache_path", type=Path, default=None)
-    parser.add_argument("--save_retrieval_cache", action="store_true")
-    parser.add_argument("--use_retrieval_cache", action="store_true")
+    save_cache_group = parser.add_mutually_exclusive_group()
+    save_cache_group.add_argument(
+        "--save_retrieval_cache", dest="save_retrieval_cache", action="store_true"
+    )
+    save_cache_group.add_argument(
+        "--no_save_retrieval_cache",
+        dest="save_retrieval_cache",
+        action="store_false",
+    )
+    parser.set_defaults(
+        save_retrieval_cache=DEFAULT_RUN_CONFIG["save_retrieval_cache"]
+    )
+    use_cache_group = parser.add_mutually_exclusive_group()
+    use_cache_group.add_argument(
+        "--use_retrieval_cache", dest="use_retrieval_cache", action="store_true"
+    )
+    use_cache_group.add_argument(
+        "--no_use_retrieval_cache",
+        dest="use_retrieval_cache",
+        action="store_false",
+    )
+    parser.set_defaults(use_retrieval_cache=DEFAULT_RUN_CONFIG["use_retrieval_cache"])
     parser.add_argument("--retrieval_cache_only", action="store_true")
-    parser.add_argument("--retrieval_cache_path", type=Path, default=None)
+    parser.add_argument(
+        "--retrieval_cache_path",
+        type=Path,
+        default=DEFAULT_RUN_CONFIG["retrieval_cache_path"],
+    )
 
     parser.add_argument("--enable_rs_mhr", action="store_true")
     parser.add_argument("--enable_efc_rag", action="store_true")
@@ -3654,53 +3767,117 @@ def parse_args():
         ],
         default="auto",
     )
-    parser.add_argument("--initial_topk", type=int, default=20)
-    parser.add_argument("--probe_topk", type=int, default=5)
-    parser.add_argument("--final_topk", type=int, default=5)
+    parser.add_argument(
+        "--initial_topk", type=int, default=DEFAULT_RUN_CONFIG["initial_topk"]
+    )
+    parser.add_argument("--probe_topk", type=int, default=DEFAULT_RUN_CONFIG["probe_topk"])
+    parser.add_argument("--final_topk", type=int, default=DEFAULT_RUN_CONFIG["final_topk"])
     parser.add_argument("--seed_topk", type=int, default=3)
     parser.add_argument("--extra_topk", type=int, default=5)
     parser.add_argument("--static_qd_num", type=int, default=2)
     parser.add_argument("--missing_query_num", type=int, default=1)
     parser.add_argument("--original_pool_topk", type=int, default=20)
     parser.add_argument("--rrf_k", type=int, default=60)
-    parser.add_argument("--enable_static_qd_fallback", action="store_true")
-    parser.add_argument("--qd_num", type=int, default=2)
-    parser.add_argument("--qd_topk", type=int, default=5)
-    parser.add_argument("--enable_generation_guided", action="store_true")
-    parser.add_argument("--gen_topk", type=int, default=10)
+    static_qd_group = parser.add_mutually_exclusive_group()
+    static_qd_group.add_argument(
+        "--enable_static_qd_fallback",
+        dest="enable_static_qd_fallback",
+        action="store_true",
+    )
+    static_qd_group.add_argument(
+        "--disable_static_qd_fallback",
+        dest="enable_static_qd_fallback",
+        action="store_false",
+    )
+    parser.set_defaults(
+        enable_static_qd_fallback=DEFAULT_RUN_CONFIG["enable_static_qd_fallback"]
+    )
+    parser.add_argument("--qd_num", type=int, default=DEFAULT_RUN_CONFIG["qd_num"])
+    parser.add_argument("--qd_topk", type=int, default=DEFAULT_RUN_CONFIG["qd_topk"])
+    generation_guided_group = parser.add_mutually_exclusive_group()
+    generation_guided_group.add_argument(
+        "--enable_generation_guided",
+        dest="enable_generation_guided",
+        action="store_true",
+    )
+    generation_guided_group.add_argument(
+        "--disable_generation_guided",
+        dest="enable_generation_guided",
+        action="store_false",
+    )
+    parser.set_defaults(
+        enable_generation_guided=DEFAULT_RUN_CONFIG["enable_generation_guided"]
+    )
+    parser.add_argument("--gen_topk", type=int, default=DEFAULT_RUN_CONFIG["gen_topk"])
     parser.add_argument(
         "--missing_query_mode",
         choices=["heuristic", "llm", "raw_y1"],
-        default="heuristic",
+        default=DEFAULT_RUN_CONFIG["missing_query_mode"],
     )
     parser.add_argument("--rrf_weight", type=float, default=1.0)
     parser.add_argument("--role_weight", type=float, default=0.30)
     parser.add_argument("--title_weight", type=float, default=0.05)
     parser.add_argument("--source_weight", type=float, default=0.05)
     parser.add_argument("--redundancy_weight", type=float, default=0.05)
-    parser.add_argument("--title_dedup_soft", action="store_true")
+    title_dedup_group = parser.add_mutually_exclusive_group()
+    title_dedup_group.add_argument(
+        "--title_dedup_soft", dest="title_dedup_soft", action="store_true"
+    )
+    title_dedup_group.add_argument(
+        "--no_title_dedup_soft", dest="title_dedup_soft", action="store_false"
+    )
+    parser.set_defaults(title_dedup_soft=DEFAULT_RUN_CONFIG["title_dedup_soft"])
     parser.add_argument("--max_same_title", type=int, default=2)
     parser.add_argument("--use_centroid_router", action="store_true")
     parser.add_argument("--save_efc_debug", action="store_true")
-    parser.add_argument("--probe_max_tokens", type=int, default=128)
+    parser.add_argument(
+        "--probe_max_tokens",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["probe_max_tokens"],
+    )
     parser.add_argument("--route_low_conf_gap", type=float, default=0.10)
     parser.add_argument("--route_avg_top5_thr", type=float, default=0.55)
     parser.add_argument("--route_anchor_top1_thr", type=float, default=0.75)
     parser.add_argument("--route_unique_title_thr", type=float, default=0.60)
     parser.add_argument("--route_c_seed_quota", type=int, default=2)
     parser.add_argument("--route_c_missing_quota", type=int, default=2)
-    parser.add_argument("--planner_model", type=str, default="Llama-3.1-8B-Instruct")
+    parser.add_argument(
+        "--planner_model", type=str, default=DEFAULT_RUN_CONFIG["planner_model"]
+    )
     parser.add_argument("--planner_model_path", type=Path, default=None)
     parser.add_argument("--planner_gpu_memory_utilization", type=float, default=0.75)
-    parser.add_argument("--planner_batch_size", type=int, default=32)
+    parser.add_argument(
+        "--planner_batch_size",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["planner_batch_size"],
+        help="Number of planner prompts submitted by each outer chunk.",
+    )
+    parser.add_argument(
+        "--planner_inference_batch_size",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["planner_inference_batch_size"],
+        help="Actual HF planner batch size on GPU; 8 is tested on a 24GB RTX 4090.",
+    )
     parser.add_argument("--save_router_debug", action="store_true")
 
     parser.add_argument("--gpu_memory_utilization", type=float, default=None)
     parser.add_argument("--strict_short_answer_prompt", action="store_true")
     parser.add_argument("--answer_only_prompt", action="store_true")
     parser.add_argument("--exact_answer_prompt", action="store_true")
-    parser.add_argument("--test_sample_num", type=none_or_int, default=None)
-    return parser.parse_args()
+    parser.add_argument(
+        "--test_sample_num",
+        type=none_or_int,
+        default=DEFAULT_RUN_CONFIG["test_sample_num"],
+    )
+    args = apply_method_defaults(parser.parse_args())
+    if args.gpu_memory_utilization is None:
+        utilization_key = (
+            "generate_gpu_memory_utilization"
+            if args.stage == "generate"
+            else "prepare_gpu_memory_utilization"
+        )
+        args.gpu_memory_utilization = DEFAULT_RUN_CONFIG[utilization_key]
+    return args
 
 
 if __name__ == "__main__":

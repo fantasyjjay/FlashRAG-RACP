@@ -1,12 +1,17 @@
-# RACP
+# RACP / EFC-RAG
 
-这个目录是 RACP 的独立实验入口，配置文件在 `racp/config.yaml`，底层复用 `flashrag.pipeline.RACPPipeline`。当前流程是：
+这个目录是 RAG 实验的统一入口。`run_racp.py` 当前默认运行 EFC-RAG，并默认执行
+HotpotQA dev 的 `prepare` 阶段。常改参数集中在
+`run_racp.py` 顶部的 `DEFAULT_RUN_CONFIG`，命令行参数仍具有更高优先级。
 
-1. E5 检索 `retrieval_topk` 篇候选文档，默认 20。
-2. 可选 reranker 重排并保留 `rerank_topk` 篇，默认 20。
-3. 在重排后的分数上用最大 gap 加 buffer 选择动态 `k`。
-4. 对选中的文档运行 Selective-Context 压缩。
-5. 把压缩后的上下文送入 Llama3-8B-Instruct 生成答案。
+默认方法可以通过一个参数切换：
+
+```bash
+--method efc      # 默认 EFC-RAG
+--method racp     # 原始 gap + refiner 流程
+--method rs_mhr   # RS-MHR
+--method qd       # 全量 query decomposition
+```
 
 ## 运行
 
@@ -15,13 +20,23 @@
 ```bash
 conda activate flashrag
               
-python racp/run_racp.py --dataset_name nq --split test --gpu_id 2
+python racp/run_racp.py
 ```
 
-输出默认保存在 `racp/output/` 下，目录名形如：
+这等价于使用 `DEFAULT_RUN_CONFIG` 中的 HotpotQA、GPU、batch 和 EFC 参数。输出默认
+保存在 `racp/output/` 下，并保存本次生成 query 的检索缓存。默认不会绑定已有缓存；
+重复实验时可在集中配置中设置 `retrieval_cache_path` 和
+`use_retrieval_cache=True`。
 
-```text
-nq_YYYY_MM_DD_HH_MM_racp/
+原始 RACP 流程需要显式指定：
+
+```bash
+python racp/run_racp.py \
+  --method racp \
+  --stage full \
+  --dataset_name nq \
+  --split test \
+  --gpu_id 2
 ```
 
 ## 分段运行
@@ -29,7 +44,12 @@ nq_YYYY_MM_DD_HH_MM_racp/
 如果一张卡同时放不下 retriever、reranker、Selective-Context 和 Llama3，可以先只生成最终 prompt：
 
 ```bash
-python racp/run_racp.py --stage prepare --dataset_name nq --split test --gpu_id 2
+python racp/run_racp.py \
+  --method racp \
+  --stage prepare \
+  --dataset_name nq \
+  --split test \
+  --gpu_id 2
 ```
 
 这一步会执行：
@@ -59,10 +79,10 @@ python racp/run_racp.py \
 脚本会自动把 vLLM 的 worker 启动方式切到 `fork`，避免子进程重复执行入口脚本。
 如果 cache 同目录存在 `config.yaml`，`generate` 阶段会默认读取那份配置，因此 HotpotQA 等数据集第二阶段只需要传 `--gpu_id` 和 `--prompt_cache_path`。
 
-完整一次跑完仍然使用默认的 `full`：
+需要在一个进程中完整跑完时显式使用 `full`：
 
 ```bash
-python racp/run_racp.py --stage full --dataset_name nq --split test --gpu_id 2
+python racp/run_racp.py --method racp --stage full --dataset_name nq --split test --gpu_id 2
 ```
 
 ## 全量 QD
@@ -371,35 +391,38 @@ query；此时去掉 `--retrieval_cache_only` 并增加 `--save_retrieval_cache`
 当前较好的设置：
 
 ```bash
-python racp/run_racp.py --dataset_name nq --split test --gpu_id 2 --max_k 8
+python racp/run_racp.py --method racp --dataset_name nq --split test --gpu_id 2 --max_k 8
 ```
 
 不限制最大 k：
 
 ```bash
-python racp/run_racp.py --dataset_name nq --split test --gpu_id 2 --max_k none
+python racp/run_racp.py --method racp --dataset_name nq --split test --gpu_id 2 --max_k none
 ```
 
 关闭 reranker：
 
 ```bash
-python racp/run_racp.py --dataset_name nq --split test --gpu_id 2 --no_reranker
+python racp/run_racp.py --method racp --dataset_name nq --split test --gpu_id 2 --no_reranker
 ```
 
 只快速跑 100 条：
 
 ```bash
-python racp/run_racp.py --dataset_name nq --split test --gpu_id 2 --test_sample_num 100
+python racp/run_racp.py --method racp --dataset_name nq --split test --gpu_id 2 --test_sample_num 100
 ```
 
 如果显存紧张，可以降低 vLLM 的显存预留：
 
 ```bash
-python racp/run_racp.py --dataset_name nq --split test --gpu_id 2 --gpu_memory_utilization 0.65
+python racp/run_racp.py --method racp --dataset_name nq --split test --gpu_id 2 --gpu_memory_utilization 0.65
 ```
 
 ## 关键参数
 
+- `DEFAULT_RUN_CONFIG`: 代码顶部集中保存默认方法、阶段、数据集、GPU、batch、top-k 和模型。
+- `--method`: 选择 `efc`、`racp`、`rs_mhr` 或 `qd`，默认 `efc`。
+- `--retrieval_batch_size`: BGE query 编码 batch，4090 默认 1024。
 - `--retrieval_topk`: 第一阶段召回数量，默认 20。
 - `--rerank_topk`: reranker 后保留数量，默认 20。
 - `--buffer`: 最大 gap 位置后额外保留的文档数，默认 5。
@@ -407,10 +430,11 @@ python racp/run_racp.py --dataset_name nq --split test --gpu_id 2 --gpu_memory_u
 - `--search_ratio`: 用前多少比例的重排分数搜索最大 gap，默认 0.9。
 - `--selection_method`: 最终文档选择方式。`title_dedup_topk` 会在 reranker 排序后优先选择不同标题的文档。
 - `--reduce_ratio`: Selective-Context 的压缩比例，默认 0.5。
-- `--stage`: 运行阶段，`full` 完整跑，`prepare` 只保存最终 prompt，`generate` 只读取 prompt 后生成和评测。
+- `--stage`: 运行阶段，默认 `prepare`；`full` 完整跑，`generate` 读取 prompt 后生成和评测。
 - `--prompt_cache_path`: `generate` 阶段读取的 prompt cache 路径。
 - `--planner_model`: 全量 QD、RS-MHR 或 EFC planner 模型，默认 `Llama-3.1-8B-Instruct`。
-- `--planner_batch_size`: 全量 QD 或 RS-MHR planner 每次提交给 vLLM 的 prompt 数，默认 32。
+- `--planner_batch_size`: Planner 每个外层分块提交的 prompt 数，默认 32。
+- `--planner_inference_batch_size`: EFC HF Planner 的真实 GPU batch，4090 默认 8。
 - `--qd_rerank_with_subqueries`: 全量 QD 中额外使用每条 subquery 重排其召回文档，并与原问题 reranker 分数融合。
 - `--qd_subquery_rerank_weight`: subquery reranker 归一化分数的融合权重，默认 0.25。
 - `--strict_short_answer_prompt`: 使用更严格的最短答案生成模板，减少正确答案被解释性文本拖累。
