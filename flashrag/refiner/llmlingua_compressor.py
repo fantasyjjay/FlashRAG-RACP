@@ -324,13 +324,23 @@ class PromptCompressor:
             end = input_ids.shape[1]
         end = min(end, past_length + self.max_position_embeddings)
         with torch.inference_mode(mode=True):
+            model_past_key_values = past_key_values
+            if past_key_values is not None:
+                try:
+                    from transformers.cache_utils import DynamicCache
+
+                    model_past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+                except Exception:
+                    model_past_key_values = past_key_values
             response = self.model(
                 input_ids[:, past_length:end],
                 attention_mask=attention_mask[:, :end],
-                past_key_values=past_key_values,
+                past_key_values=model_past_key_values,
                 use_cache=True,
             )
             past_key_values = response.past_key_values
+            if hasattr(past_key_values, "to_legacy_cache"):
+                past_key_values = [list(layer_cache) for layer_cache in past_key_values.to_legacy_cache()]
 
         shift_logits = response.logits[..., :-1, :].contiguous()
         shift_labels = input_ids[..., past_length + 1 : end].contiguous()

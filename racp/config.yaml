@@ -126,6 +126,31 @@ racp_config:
   max_k: 8
   search_ratio: 0.9
 
+# EFC-RAG is enabled through --enable_efc_rag. The CLI values override this block.
+efc_rag_config:
+  enabled: False
+  force_route: auto
+  initial_topk: 20
+  probe_topk: 5
+  final_topk: 5
+  enable_static_qd_fallback: True
+  qd_num: 2
+  qd_topk: 5
+  enable_generation_guided: True
+  gen_topk: 10
+  missing_query_mode: heuristic
+  rrf_k: 60
+  rrf_weight: 1.0
+  role_weight: 0.30
+  title_weight: 0.05
+  source_weight: 0.05
+  redundancy_weight: 0.05
+  title_dedup_soft: True
+  max_same_title: 2
+  use_centroid_router: False
+  save_efc_debug: False
+  probe_max_tokens: 128
+
 # -------------------------------------------------Evaluation Settings------------------------------------------------#
 # Metrics to evaluate the result
 metrics: [ 'em','f1','acc','precision','recall','retrieval_recall']

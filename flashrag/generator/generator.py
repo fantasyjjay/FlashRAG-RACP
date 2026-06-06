@@ -471,18 +471,25 @@ class HFCausalLMGenerator(BaseGenerator):
                     else:
                         self.model.generation_config.pad_token_id = 151643
                 # ---- end Qwen token fix ----
+                need_scores = return_scores or return_dict
                 outputs = self.model.generate(
                     **inputs,
-                    output_scores=True,
+                    output_scores=need_scores,
                     return_dict_in_generate=True,
                     **generation_params,
                 )
 
                 generated_ids = outputs.sequences
-                logits = torch.stack(outputs.scores, dim=1).softmax(-1)
                 generated_ids = generated_ids[:, inputs["input_ids"].shape[-1] :]
-                gen_score = torch.gather(logits, 2, generated_ids[:, :, None]).squeeze(-1).cpu().tolist()
-                scores.extend(gen_score)
+                if need_scores:
+                    logits = torch.stack(outputs.scores, dim=1).softmax(-1)
+                    gen_score = (
+                        torch.gather(logits, 2, generated_ids[:, :, None])
+                        .squeeze(-1)
+                        .cpu()
+                        .tolist()
+                    )
+                    scores.extend(gen_score)
 
             # get additinoal info
             if return_dict:

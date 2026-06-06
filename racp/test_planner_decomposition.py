@@ -35,7 +35,9 @@ from flashrag.config import Config
 from flashrag.utils import get_dataset, get_generator
 from run_racp import (
     DEFAULT_CONFIG_PATH,
+    build_query_decomposition_planner_config,
     generate_subqueries,
+    release_generator,
 )
 
 
@@ -49,6 +51,18 @@ def build_config(args):
         "dataset_name": args.dataset_name,
         "split": args.split,
         "test_sample_num": None,
+        "decomposition_config": {
+            "enabled": True,
+            "subquery_num": 2,
+            "subquery_topk": 5,
+            "planner_model": args.planner_model,
+            "planner_model_path": str(args.planner_model_path)
+            if args.planner_model_path is not None
+            else None,
+            "planner_gpu_memory_utilization": args.planner_gpu_memory_utilization,
+            "planner_batch_size": args.planner_batch_size,
+            "planner_max_tokens": args.planner_max_tokens,
+        },
     }
     if args.gpu_memory_utilization is not None:
         config_dict["gpu_memory_utilization"] = args.gpu_memory_utilization
@@ -75,14 +89,16 @@ def run(args):
     items, indices = load_random_items(config, args.split, args.sample_num, args.seed)
     questions = [item.question for item in items]
 
-    generator = get_generator(config)
+    planner_config = build_query_decomposition_planner_config(config)
+    generator = get_generator(planner_config)
+    decomposition_config = dict(config["decomposition_config"])
+    decomposition_config["planner_model_path"] = planner_config["generator_model_path"]
     planner_records = generate_subqueries(
         questions,
         generator,
-        {
-            "planner_model_path": config["generator_model_path"],
-        },
+        decomposition_config,
     )
+    release_generator(generator)
 
     records = []
     for idx, item, planner_record in zip(indices, items, planner_records):
@@ -96,6 +112,7 @@ def run(args):
             "parsed_subqueries": parsed_subqueries,
             "valid": planner_record["valid"],
             "invalid": not planner_record["valid"],
+            "partial": planner_record["partial"],
             "fallback": planner_record["fallback"],
         }
         records.append(record)
@@ -109,7 +126,7 @@ def run(args):
     print(f"Saved planner decomposition sample to: {args.output_path}")
     print(f"Valid: {valid_num}/{len(records)}")
     for idx, record in enumerate(records, 1):
-        status = "valid" if record["valid"] else "invalid"
+        status = "valid" if record["valid"] else "partial" if record["partial"] else "invalid"
         print(f"\n=== Sample {idx} | {status} | fallback={record['fallback']} ===")
         print(f"question: {record['question']}")
         print(f"raw planner output: {record['raw_planner_output']}")
@@ -125,6 +142,11 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--gpu_id", type=str, default="2")
     parser.add_argument("--gpu_memory_utilization", type=float, default=None)
+    parser.add_argument("--planner_model", type=str, default="Llama-3.1-8B-Instruct")
+    parser.add_argument("--planner_model_path", type=Path, default=None)
+    parser.add_argument("--planner_gpu_memory_utilization", type=float, default=0.75)
+    parser.add_argument("--planner_batch_size", type=int, default=32)
+    parser.add_argument("--planner_max_tokens", type=int, default=96)
     parser.add_argument("--output_path", type=Path, default=DEFAULT_OUTPUT_PATH)
     return parser.parse_args()
 

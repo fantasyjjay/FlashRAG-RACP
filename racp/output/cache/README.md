@@ -11,6 +11,34 @@ conda activate flashrag
 cd /home/guanjunjie/jayj/FlashRAG
 ```
 
+## Naming Convention
+
+Cache filenames should include the dataset, split, retriever, reranker setting,
+and top-k value:
+
+```text
+{dataset}_{split}_bge_large_{no_rerank|rerank}_top{k}_prompt_cache.json
+{dataset}_{split}_bge_large_{no_rerank|rerank}_top{k}_retrieval_cache.json
+```
+
+Current HotpotQA native RAG caches in this directory use the same convention:
+
+```text
+hotpotqa_dev_bge_large_no_rerank_top5_prompt_cache.json
+hotpotqa_dev_bge_large_no_rerank_top10_prompt_cache.json
+hotpotqa_dev_bge_large_no_rerank_top15_prompt_cache.json
+hotpotqa_dev_bge_large_no_rerank_top20_prompt_cache.json
+hotpotqa_dev_bge_large_rerank_top5_prompt_cache.json
+hotpotqa_dev_bge_large_rerank_top10_prompt_cache.json
+hotpotqa_dev_bge_large_rerank_top15_prompt_cache.json
+hotpotqa_dev_bge_large_rerank_top20_prompt_cache.json
+```
+
+`hotpotqa_dev_bge_large_no_rerank_prepared_top15_prompt_cache.json` is kept as
+an older top15 cache built by a separate prepare run. Prefer the regular
+`hotpotqa_dev_bge_large_no_rerank_top15_prompt_cache.json` for top-k curves
+derived from top20.
+
 ## Cache Types
 
 There are two different cache files:
@@ -187,4 +215,3 @@ CUDA_VISIBLE_DEVICES=0 python racp/run_exp.py \
   `--use_retrieval_cache`.
 - Choose a free GPU before generation with `nvidia-smi`. Replace GPU `0` in
   the examples when needed.
-

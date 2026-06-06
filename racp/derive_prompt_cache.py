@@ -10,7 +10,9 @@ sys.path.insert(0, str(REPO_DIR))
 
 from flashrag.config import Config
 from flashrag.dataset import Dataset
-from flashrag.prompt import PromptTemplate
+from run_racp import (
+    build_answer_prompt_template,
+)
 
 
 CONFIG_PATH = RACP_DIR / "config.yaml"
@@ -39,8 +41,19 @@ def get_retrieval_result(item, item_idx):
     return retrieval_result
 
 
-def derive_cache(source_data, topk, output_path, config):
-    prompt_template = PromptTemplate(config)
+def derive_cache(
+    source_data,
+    topk,
+    output_path,
+    config,
+    strict_short_answer_prompt=False,
+    answer_only_prompt=False,
+    exact_answer_prompt=False,
+):
+    config["strict_short_answer_prompt"] = strict_short_answer_prompt
+    config["answer_only_prompt"] = answer_only_prompt
+    config["exact_answer_prompt"] = exact_answer_prompt
+    prompt_template = build_answer_prompt_template(config)
     derived_data = []
     too_short = 0
 
@@ -102,11 +115,26 @@ def parse_args():
     )
     parser.add_argument("--dataset_name", type=str)
     parser.add_argument("--split", type=str)
+    parser.add_argument("--strict_short_answer_prompt", action="store_true")
+    parser.add_argument("--answer_only_prompt", action="store_true")
+    parser.add_argument("--exact_answer_prompt", action="store_true")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if sum(
+        bool(flag)
+        for flag in (
+            args.strict_short_answer_prompt,
+            args.answer_only_prompt,
+            args.exact_answer_prompt,
+        )
+    ) > 1:
+        raise ValueError(
+            "--strict_short_answer_prompt, --answer_only_prompt, and "
+            "--exact_answer_prompt are exclusive."
+        )
     source_data = load_source_cache(args.source_prompt_cache)
 
     config_overrides = {
@@ -130,7 +158,15 @@ def main():
                 f"{max_source_docs} retrieved docs."
             )
         output_path = args.output_dir / f"{args.prefix}_top{topk}_prompt_cache.json"
-        derive_cache(source_data, topk, output_path, config)
+        derive_cache(
+            source_data,
+            topk,
+            output_path,
+            config,
+            strict_short_answer_prompt=args.strict_short_answer_prompt,
+            answer_only_prompt=args.answer_only_prompt,
+            exact_answer_prompt=args.exact_answer_prompt,
+        )
 
 
 if __name__ == "__main__":

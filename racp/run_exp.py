@@ -25,6 +25,12 @@ def load_config(config_dict=None):
     return Config(str(CONFIG_PATH), config_dict)
 
 
+def load_config_from_path(config_path, config_dict=None):
+    config_dict = {} if config_dict is None else dict(config_dict)
+    config_dict.update(RUNTIME_CONFIG_OVERRIDES)
+    return Config(str(config_path), config_dict)
+
+
 def set_runtime_config_overrides(args):
     RUNTIME_CONFIG_OVERRIDES.clear()
     if args.save_note is not None:
@@ -83,12 +89,29 @@ def load_prompt_cache(config, cache_path):
     return Dataset(config=config, data=data)
 
 
+def save_retrieval_cache_from_dataset(config, dataset):
+    cache = {}
+    for item in dataset:
+        docs = []
+        for doc in item.retrieval_result:
+            new_doc = dict(doc)
+            if "score" not in new_doc:
+                raise ValueError("Cannot save retrieval cache: retrieved document has no score.")
+            docs.append(new_doc)
+        cache[item.question] = docs
+
+    save_path = Path(config["save_dir"]) / "retrieval_cache.json"
+    with save_path.open("w", encoding="utf-8") as f:
+        json.dump(cache, f, indent=4)
+    print(f"Retrieval cache saved to: {save_path}")
+
+
 def native_prepare(args):
     if args.method_name != "naive":
         raise ValueError("--stage prepare currently supports --method_name naive only.")
 
     from flashrag.prompt import PromptTemplate
-    from flashrag.utils import get_retriever
+    from flashrag.utils import get_reranker, get_retriever
 
     config = load_config(
         {
@@ -98,11 +121,35 @@ def native_prepare(args):
             "split": args.split,
         }
     )
-    all_split = get_dataset(config)
-    dataset = all_split[args.split]
-    retriever = get_retriever(config)
-    retrieval_results = retriever.batch_search(dataset.question)
-    dataset.update_output("retrieval_result", retrieval_results)
+    if args.source_prompt_cache is not None:
+        dataset = load_prompt_cache(config, args.source_prompt_cache)
+        if not dataset.output or any("retrieval_result" not in item_output for item_output in dataset.output):
+            raise ValueError(f"Source prompt cache has no retrieval_result: {args.source_prompt_cache}")
+        print(f"Loaded retrieval_result from source prompt cache: {args.source_prompt_cache}")
+
+        if config["use_reranker"]:
+            reranker = get_reranker(config)
+            reranked_docs, rerank_scores = reranker.rerank(
+                dataset.question,
+                dataset.retrieval_result,
+                topk=config["rerank_topk"],
+            )
+            for docs, scores in zip(reranked_docs, rerank_scores):
+                for doc, score in zip(docs, scores):
+                    doc["score"] = float(score)
+            dataset.update_output("retrieval_result", reranked_docs)
+
+        if config["save_retrieval_cache"]:
+            save_retrieval_cache_from_dataset(config, dataset)
+    else:
+        all_split = get_dataset(config)
+        dataset = all_split[args.split]
+        retriever = get_retriever(config)
+        retrieval_results = retriever.batch_search(dataset.question)
+        dataset.update_output("retrieval_result", retrieval_results)
+
+        if config["save_retrieval_cache"]:
+            retriever._save_cache()
 
     prompt_template = PromptTemplate(config)
     input_prompts = [
@@ -110,9 +157,6 @@ def native_prepare(args):
         for q, r in zip(dataset.question, dataset.retrieval_result)
     ]
     dataset.update_output("prompt", input_prompts)
-
-    if config["save_retrieval_cache"]:
-        retriever._save_cache()
 
     prompt_cache_path = args.prompt_cache_path or default_prompt_cache_path(config)
     save_prompt_cache(dataset, prompt_cache_path)
@@ -135,6 +179,127 @@ def native_generate(args):
             "dataset_name": args.dataset_name,
             "split": args.split,
         }
+    )
+    dataset = load_prompt_cache(config, args.prompt_cache_path)
+    generator = get_generator(config)
+    pred_answer_list = generator.generate(dataset.prompt)
+    dataset.update_output("pred", pred_answer_list)
+
+    result = Evaluator(config).evaluate(dataset)
+    print(result)
+    return dataset
+
+
+REFINER_METHODS = {"selective-context", "llmlingua"}
+
+
+def refiner_method_config(args):
+    base_config = load_config({"disable_save": True})
+    model2path = base_config["model2path"]
+
+    common = {
+        "save_note": args.save_note or args.method_name,
+        "gpu_id": args.gpu_id,
+        "dataset_name": args.dataset_name,
+        "split": args.split,
+        "retrieval_topk": args.retrieval_topk or 20,
+        "rerank_topk": args.rerank_topk or 5,
+        "use_reranker": False if args.no_reranker else True,
+        "metric_setting": {"retrieval_recall_topk": args.rerank_topk or 5},
+    }
+
+    if args.method_name == "selective-context":
+        common.update(
+            {
+                "refiner_name": "selective-context",
+                "refiner_model_path": model2path.get("gpt2", "/home/guanjunjie/my_models/gpt2"),
+                "sc_config": {"reduce_ratio": 0.5},
+            }
+        )
+        return common
+
+    if args.method_name == "llmlingua":
+        common.update(
+            {
+                "refiner_name": "longllmlingua",
+                "refiner_model_path": model2path.get("llama2-7B", "/home/guanjunjie/my_models/Llama-2-7b-hf"),
+                "llmlingua_config": {
+                    "rate": 0.55,
+                    "condition_in_question": "after_condition",
+                    "reorder_context": "sort",
+                    "dynamic_context_compression_ratio": 0.3,
+                    "condition_compare": True,
+                    "context_budget": "+100",
+                    "rank_method": "longllmlingua",
+                },
+                "refiner_input_prompt_flag": False,
+            }
+        )
+        return common
+
+    raise ValueError(f"Unsupported refiner method: {args.method_name}")
+
+
+def refiner_prepare(args):
+    if args.method_name not in REFINER_METHODS:
+        raise ValueError("--stage prepare supports naive, selective-context, and llmlingua.")
+
+    from flashrag.prompt import PromptTemplate
+    from flashrag.utils import get_refiner, get_retriever
+
+    config = load_config(refiner_method_config(args))
+
+    if args.source_prompt_cache is not None:
+        dataset = load_prompt_cache(config, args.source_prompt_cache)
+        if not dataset.output or any("retrieval_result" not in item_output for item_output in dataset.output):
+            raise ValueError(f"Source prompt cache has no retrieval_result: {args.source_prompt_cache}")
+        print(f"Loaded retrieval_result from source prompt cache: {args.source_prompt_cache}")
+    else:
+        all_split = get_dataset(config)
+        dataset = all_split[args.split]
+        retriever = get_retriever(config)
+        retrieval_results = retriever.batch_search(dataset.question)
+        dataset.update_output("retrieval_result", retrieval_results)
+        if config["save_retrieval_cache"]:
+            retriever._save_cache()
+
+    refiner = get_refiner(config)
+    refine_results = refiner.batch_run(dataset)
+    dataset.update_output("refine_result", refine_results)
+
+    prompt_template = PromptTemplate(config)
+    input_prompts = [
+        prompt_template.get_string(question=q, formatted_reference=r)
+        for q, r in zip(dataset.question, dataset.refine_result)
+    ]
+    dataset.update_output("prompt", input_prompts)
+
+    prompt_cache_path = args.prompt_cache_path or default_prompt_cache_path(config)
+    save_prompt_cache(dataset, prompt_cache_path)
+    return dataset
+
+
+def refiner_generate(args):
+    if args.method_name not in REFINER_METHODS:
+        raise ValueError("--stage generate supports naive, selective-context, and llmlingua.")
+    if args.prompt_cache_path is None:
+        raise ValueError("Please provide --prompt_cache_path for --stage generate.")
+
+    from flashrag.evaluator import Evaluator
+    from flashrag.utils import get_generator
+
+    prompt_cache_dir = Path(args.prompt_cache_path).resolve().parent
+    prompt_config_path = prompt_cache_dir / "config.yaml"
+    config_path = prompt_config_path if prompt_config_path.exists() else CONFIG_PATH
+    config = load_config_from_path(
+        config_path,
+        {
+            "save_note": args.save_note or f"{args.method_name}-generate",
+            "save_dir": str(prompt_cache_dir),
+            "gpu_id": args.gpu_id,
+            "dataset_name": args.dataset_name,
+            "split": args.split,
+        },
     )
     dataset = load_prompt_cache(config, args.prompt_cache_path)
     generator = get_generator(config)
@@ -245,27 +410,8 @@ def llmlingua(args):
         in ICLR MEFoMo 2024.
         Official repo: https://github.com/microsoft/LLMLingua
     """
-    refiner_name = "longllmlingua"  #
-    refiner_model_path = "model/llama-2-7b-hf"
-
-    config_dict = {
-        "refiner_name": refiner_name,
-        "refiner_model_path": refiner_model_path,
-        "llmlingua_config": {
-            "rate": 0.55,
-            "condition_in_question": "after_condition",
-            "reorder_context": "sort",
-            "dynamic_context_compression_ratio": 0.3,
-            "condition_compare": True,
-            "context_budget": "+100",
-            "rank_method": "longllmlingua",
-        },
-        "refiner_input_prompt_flag": False,
-        "save_note": "longllmlingua",
-        "gpu_id": args.gpu_id,
-        "dataset_name": args.dataset_name,
-        "split": args.split,
-    }
+    config_dict = refiner_method_config(args)
+    config_dict["save_note"] = args.save_note or "longllmlingua"
 
     # preparation
     config = load_config(config_dict)
@@ -342,18 +488,8 @@ def sc(args):
             pip install en_core_web_sm-3.6.0.tar.gz
             ```
     """
-    refiner_name = "selective-context"
-    refiner_model_path = "model/gpt2"
-
-    config_dict = {
-        "refiner_name": refiner_name,
-        "refiner_model_path": refiner_model_path,
-        "sc_config": {"reduce_ratio": 0.5},
-        "save_note": "selective-context",
-        "gpu_id": args.gpu_id,
-        "dataset_name": args.dataset_name,
-        "split": args.split,
-    }
+    config_dict = refiner_method_config(args)
+    config_dict["save_note"] = args.save_note or "selective-context"
 
     # preparation
     config = load_config(config_dict)
@@ -942,6 +1078,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_retrieval_cache", action="store_true")
     parser.add_argument("--use_retrieval_cache", action="store_true")
     parser.add_argument("--retrieval_cache_path", type=Path)
+    parser.add_argument("--source_prompt_cache", type=Path)
 
     
     func_dict = {
@@ -975,10 +1112,20 @@ if __name__ == "__main__":
     args = normalize_args(parser.parse_args())
     set_runtime_config_overrides(args)
     if args.stage == "prepare":
-        native_prepare(args)
+        if args.method_name == "naive":
+            native_prepare(args)
+        elif args.method_name in REFINER_METHODS:
+            refiner_prepare(args)
+        else:
+            raise ValueError(f"--stage prepare is not supported for {args.method_name}.")
         raise SystemExit(0)
     if args.stage == "generate":
-        native_generate(args)
+        if args.method_name == "naive":
+            native_generate(args)
+        elif args.method_name in REFINER_METHODS:
+            refiner_generate(args)
+        else:
+            raise ValueError(f"--stage generate is not supported for {args.method_name}.")
         raise SystemExit(0)
     func = func_dict[args.method_name]
     func(args)
