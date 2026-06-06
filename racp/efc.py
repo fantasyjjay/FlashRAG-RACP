@@ -38,6 +38,10 @@ ENTITY_STOP_WORDS = {
     "english",
     "french",
     "german",
+    "however",
+    "there",
+    "from",
+    "key",
 }
 RELATION_TERMS = (
     "born",
@@ -53,6 +57,44 @@ RELATION_TERMS = (
     "father",
     "mother",
     "worked with",
+)
+PROBE_UNCERTAINTY_MARKERS = (
+    "no information",
+    "not enough information",
+    "does not mention",
+    "do not mention",
+    "doesn't mention",
+    "unknown",
+    "cannot determine",
+    "can't determine",
+    "unable to determine",
+    "not provided",
+    "not specified",
+    "not available",
+)
+QUERY_FOCUS_PATTERNS = (
+    (r"\bgovernment position\b", "government position"),
+    (r"\bfight song\b", "fight song"),
+    (r"\bbirth name\b", "birth name"),
+    (r"\b(?:other )?occupation\b", "occupation"),
+    (r"\bnationality\b", "nationality"),
+    (r"\bformer name\b", "former name"),
+    (r"\breal name\b", "real name"),
+    (r"\bmaiden name\b", "maiden name"),
+    (r"\bdate of birth\b", "date of birth"),
+    (r"\bwhen was\b", "date year"),
+    (r"\bwhere was\b", "location"),
+    (r"\bseating capacity\b|\bcan seat\b", "seating capacity"),
+    (r"\bhow many\b", "number"),
+    (r"\bwhat album\b", "album"),
+    (r"\bwhat university\b|\bwhich university\b", "university"),
+    (r"\bwhat school\b|\bwhich school\b", "school"),
+    (r"\bwhat country\b|\bwhich country\b", "country"),
+    (r"\bwhat city\b|\bwhich city\b", "city"),
+    (r"\bwhat year\b|\bwhich year\b", "year"),
+    (r"\bwho directed\b|\bdirector\b", "director"),
+    (r"\bwho wrote\b|\bauthor\b|\bwriter\b", "author"),
+    (r"\bspouse\b|\bwife\b|\bhusband\b", "spouse"),
 )
 
 
@@ -131,7 +173,7 @@ def merge_docs(doc_groups):
     return list(pool.values())
 
 
-def classify_question(question):
+def classify_question(question, assume_multihop=False):
     lowered = " ".join(question.lower().split())
     comparison_markers = (
         " between ",
@@ -178,6 +220,8 @@ def classify_question(question):
         return "bridge"
     if any(marker in lowered for marker in constraint_markers):
         return "constraint"
+    if assume_multihop:
+        return "bridge"
     return "generic"
 
 
@@ -218,6 +262,37 @@ def answer_type_hit(text, answer_type):
     return bool(text.strip())
 
 
+def probe_answer_is_uncertain(answer):
+    lowered = (answer or "").lower()
+    return any(marker in lowered for marker in PROBE_UNCERTAINTY_MARKERS)
+
+
+def extract_probe_final_answer(answer):
+    matches = re.findall(
+        r"(?:so\s+the\s+answer\s+is|final\s+answer\s*:?)\s*"
+        r"(yes|no|[^\n.]+)",
+        answer or "",
+        re.I,
+    )
+    return matches[-1].strip().lower() if matches else ""
+
+
+def probe_answer_is_contradictory(question, answer):
+    if infer_answer_type(question) != "yesno":
+        return False
+    lowered = (answer or "").lower()
+    final_answer = extract_probe_final_answer(answer)
+    if final_answer.startswith("no") and re.search(
+        r"\bboth\b.{0,100}\b(?:same|american|british|english|french|german)\b",
+        lowered,
+        re.S,
+    ):
+        return True
+    return final_answer.startswith("yes") and bool(
+        re.search(r"\b(?:different|not the same|differ)\b", lowered)
+    )
+
+
 def probe_answer_is_bad(question, answer):
     answer = (answer or "").strip()
     lowered = answer.lower()
@@ -227,6 +302,8 @@ def probe_answer_is_bad(question, answer):
         marker in lowered
         for marker in ("i don't know", "i do not know", "cannot answer", "can't answer")
     ):
+        return True
+    if probe_answer_is_uncertain(answer):
         return True
     answer_words = re.findall(r"[a-z]+", lowered)
     if answer_words and answer_words[-1] in {
@@ -245,7 +322,10 @@ def probe_answer_is_bad(question, answer):
     question_ratio = len(set(question.lower().split()) & set(lowered.split())) / max(
         1, len(set(lowered.split()))
     )
-    return question_ratio > 0.9 and len(answer.split()) <= len(question.split()) + 2
+    if question_ratio > 0.9 and len(answer.split()) <= len(question.split()) + 2:
+        return True
+
+    return probe_answer_is_contradictory(question, answer)
 
 
 def extract_new_entities(question, answer, r0_titles):
@@ -280,15 +360,29 @@ def extract_new_entities(question, answer, r0_titles):
     return entities
 
 
-def compute_router_features(question, r0_docs, probe_answer, centroid_features=None):
+def compute_router_features(
+    question,
+    r0_docs,
+    probe_answer,
+    centroid_features=None,
+    assume_multihop=False,
+):
     top5 = r0_docs[:5]
     scores = [
         float(doc.get("retriever_scores", {}).get("original", 0.0)) for doc in r0_docs
     ]
     titles = [doc_title(doc) for doc in top5]
-    question_type = classify_question(question)
+    question_type = classify_question(question, assume_multihop=assume_multihop)
     answer_type = infer_answer_type(question)
     new_entities = extract_new_entities(question, probe_answer, titles)
+    comparison_left, comparison_right = extract_comparison_sides(question)
+    top5_text = "\n".join(
+        f"{doc_title(doc)}\n{doc_contents(doc)}".lower() for doc in top5
+    )
+    comparison_side_coverage = (
+        int(bool(comparison_left) and comparison_left.lower() in top5_text)
+        + int(bool(comparison_right) and comparison_right.lower() in top5_text)
+    )
     centroid_features = centroid_features or {}
     return {
         "s1": scores[0] if scores else 0.0,
@@ -301,7 +395,11 @@ def compute_router_features(question, r0_docs, probe_answer, centroid_features=N
         "centroid_shift": centroid_features.get("centroid_shift"),
         "question_is_multihop": question_type != "generic",
         "question_type": question_type,
+        "comparison_side_coverage_top5": comparison_side_coverage,
         "y1_bad": probe_answer_is_bad(question, probe_answer),
+        "y1_uncertain": probe_answer_is_uncertain(probe_answer),
+        "y1_contradictory": probe_answer_is_contradictory(question, probe_answer),
+        "y1_final_answer": extract_probe_final_answer(probe_answer),
         "y1_has_new_entity": bool(new_entities),
         "y1_new_entities": new_entities,
         "y1_new_entity_count": len(new_entities),
@@ -315,22 +413,17 @@ def compute_router_features(question, r0_docs, probe_answer, centroid_features=N
 def decide_route(features, force_route="auto"):
     if force_route != "auto":
         return force_route
-    if not features["question_is_multihop"] and not features["y1_bad"]:
-        return "direct"
     if (
-        not features["y1_bad"]
-        and features["title_unique_ratio"] >= 0.6
-        and features["answer_type_hit_top5"]
+        features["question_type"] == "comparison"
+        and features.get("comparison_side_coverage_top5", 0) >= 2
     ):
         return "direct"
-    if features["y1_bad"] and features["avg_top5_score"] <= features["s1"]:
-        return "static_qd"
-    if (
-        not features["y1_has_new_entity"]
-        and features["title_unique_ratio"] < 0.4
-        and not features["answer_type_hit_top5"]
-    ):
-        return "static_qd"
+    if features.get("y1_contradictory", False) and features["answer_type_hit_top5"]:
+        return "direct"
+    if features["y1_bad"] or features.get("y1_uncertain", False):
+        return "generation_guided" if features["y1_has_new_entity"] else "static_qd"
+    if not features["question_is_multihop"]:
+        return "direct"
     if (
         features["q_centroid_sim"] is not None
         and features["q_centroid_sim"] < 0.35
@@ -338,11 +431,12 @@ def decide_route(features, force_route="auto"):
     ):
         return "static_qd"
     if (
-        features["question_is_multihop"]
+        features["gap_1_5"] < 0.03
         and features["y1_has_new_entity"]
-        and features["title_unique_ratio"] < 0.8
     ):
         return "generation_guided"
+    if features["gap_1_5"] < 0.03:
+        return "static_qd"
     if (
         features["top5_cohesion"] is not None
         and features["top5_cohesion"] > 0.75
@@ -369,20 +463,42 @@ def answer_type_terms(answer_type, question):
     return "facts"
 
 
-def build_heuristic_missing_query(question, features, r0_titles):
+def query_focus_terms(question, answer_type):
+    for pattern, focus in QUERY_FOCUS_PATTERNS:
+        if re.search(pattern, question, re.I):
+            return focus
+    return answer_type_terms(answer_type, question)
+
+
+def build_heuristic_missing_query(question, features, r0_titles, probe_answer=""):
     entities = features.get("y1_new_entities", [])
     if not entities:
         return ""
     title_lookup = {title.lower(): title for title in r0_titles}
-    best_entity = max(
-        entities,
-        key=lambda entity: (
-            entity.lower() in title_lookup,
+    lowered_probe = (probe_answer or "").lower()
+
+    def entity_score(entity):
+        lowered_entity = entity.lower()
+        relation_match = bool(
+            re.search(
+                rf"\b(?:is|was|are|were|named|called|at|in)\s+(?:the\s+)?"
+                rf"{re.escape(lowered_entity)}\b",
+                lowered_probe,
+            )
+        )
+        return (
+            lowered_entity in title_lookup,
+            relation_match,
             len(entity.split()),
             len(entity),
-        ),
+        )
+
+    best_entity = max(
+        entities,
+        key=entity_score,
     )
-    return f"{best_entity} {answer_type_terms(features['answer_type'], question)}".strip()
+    focus = query_focus_terms(question, features["answer_type"])
+    return f"{best_entity} {focus}".strip()
 
 
 def add_rrf_scores(candidate_pool, rrf_k=60):
@@ -522,6 +638,25 @@ def role_aware_pack(
     for doc in candidate_pool:
         doc["role_scores"] = compute_role_scores(doc, question, probe_answer, features)
 
+    original_seed_count = min(
+        int(config.get("original_seed_count", 0)),
+        final_topk,
+    )
+    if original_seed_count:
+        original_docs = [
+            doc for doc in candidate_pool if "original" in doc.get("sources", [])
+        ]
+        selected = select_ranked_title_diverse(
+            original_docs, original_seed_count, max_same_title=1
+        )
+        for doc in selected:
+            title_counts[doc_title(doc).lower()] += 1
+            covered_sources.update(doc.get("sources", []))
+            for role in ROLE_NAMES:
+                covered[role] = max(
+                    covered[role], doc["role_scores"].get(role, 0.0)
+                )
+
     while len(selected) < min(final_topk, len(candidate_pool)):
         best_doc = None
         best_gain = None
@@ -567,6 +702,39 @@ def role_aware_pack(
             covered[role] = max(covered[role], best_doc["role_scores"].get(role, 0.0))
 
     return order_context(selected, route), covered
+
+
+def score_selected_roles(selected, question, probe_answer, features):
+    covered = {role: 0.0 for role in ROLE_NAMES}
+    for doc in selected:
+        doc["role_scores"] = compute_role_scores(doc, question, probe_answer, features)
+        for role in ROLE_NAMES:
+            covered[role] = max(covered[role], doc["role_scores"].get(role, 0.0))
+    return covered
+
+
+def select_ranked_title_diverse(docs, final_topk, max_same_title=1):
+    selected = []
+    deferred = []
+    title_counts = Counter()
+    ranked_docs = sorted(
+        docs, key=lambda doc: doc.get("ranks", {}).get("original", 10**9)
+    )
+    for doc in ranked_docs:
+        title_key = doc_title(doc).lower()
+        if title_counts[title_key] >= max_same_title:
+            deferred.append(doc)
+            continue
+        selected.append(doc)
+        title_counts[title_key] += 1
+        if len(selected) == final_topk:
+            return selected
+
+    for doc in deferred:
+        selected.append(doc)
+        if len(selected) == final_topk:
+            break
+    return selected
 
 
 def order_context(selected, route):

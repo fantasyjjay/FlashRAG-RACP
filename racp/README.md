@@ -258,13 +258,15 @@ cache-only 模式适合重复相同数据集、planner 和检索参数的实验�
 EFC-RAG 是免 cross-encoder reranker 的多跳流程：
 
 ```text
-原问题 top20 -> top5 probe generation -> 确定性 router
+原问题 top20 -> top5 probe generation -> HotpotQA 多跳 router
 -> generation-guided / static-QD fallback
--> query 级 RRF -> 角色感知 top5 打包 -> 最终生成
+-> query 级 RRF -> 原始证据保留 + 角色感知 top6 打包 -> 最终生成
 ```
 
-默认推荐配置使用启发式 missing-hop query。只有 static-QD 路由会加载 8B planner；
-EFC 在加载 planner 前会释放 probe，并将 HF 实际生成 batch 限制为 8。单张
+默认配置使用 8B planner 生成 missing-hop query；无效或与原问题过于相似的 query
+会自动回退到 static-QD。输出同时记录 `router_route`（原始路由决策）和 `route`
+（回退后的实际执行路由）。EFC 在加载 planner 前会释放 probe，并将 HF 实际生成
+batch 限制为 8。单张
 RTX 4090 上同时保留 BGE、使用 1024-token 输入和 96-token 输出的压力测试峰值约
 18.13 GiB；batch 16 峰值约 20.04 GiB，显存余量较小，因此不作为默认值：
 
@@ -278,11 +280,12 @@ python racp/run_racp.py \
   --no_reranker \
   --initial_topk 20 \
   --probe_topk 5 \
-  --final_topk 5 \
+  --final_topk 6 \
   --enable_generation_guided \
   --enable_static_qd_fallback \
-  --missing_query_mode heuristic \
+  --missing_query_mode llm \
   --planner_batch_size 32 \
+  --original_seed_count 3 \
   --title_dedup_soft \
   --test_sample_num 50 \
   --save_note efc-smoke-50
@@ -307,7 +310,8 @@ python racp/run_racp.py \
 --force_route generation_guided
 ```
 
-角色、标题、来源和冗余项可通过 `--role_weight`、`--title_weight`、
+扩展路由默认先保留 3 篇原始检索证据，再补充角色覆盖文档，避免新 query 把已有
+支持文档挤出上下文。角色、标题、来源和冗余项可通过 `--role_weight`、`--title_weight`、
 `--source_weight`、`--redundancy_weight` 设为 0 做消融；`--rrf_weight 1`
 保留基础 RRF 排序。`--missing_query_mode` 还支持 `llm` 和 `raw_y1`。
 

@@ -57,6 +57,8 @@ from racp.efc import (
     normalize_doc as efc_normalize_doc,
     role_aware_pack,
     role_coverage_ratio,
+    score_selected_roles,
+    select_ranked_title_diverse,
 )
 
 
@@ -87,16 +89,23 @@ DEFAULT_RUN_CONFIG = {
     "initial_topk": 20,
     "probe_topk": 5,
     "probe_max_tokens": 128,
-    "final_topk": 5,
+    "final_topk": 6,
     "qd_num": 2,
     "qd_topk": 5,
     "gen_topk": 10,
     "planner_model": "Llama-3.1-8B-Instruct",
     "planner_max_tokens": 96,
-    "missing_query_mode": "heuristic",
+    "missing_query_mode": "llm",
     "enable_generation_guided": True,
     "enable_static_qd_fallback": True,
     "title_dedup_soft": True,
+    "rrf_weight": 1.0,
+    "role_weight": 0.30,
+    "title_weight": 0.02,
+    "source_weight": 0.05,
+    "redundancy_weight": 0.01,
+    "max_same_title": 2,
+    "original_seed_count": 3,
 }
 
 PLANNER_STOP_WORDS = [
@@ -164,26 +173,26 @@ RS_MHR_PROMPT_CACHE_OUTPUT_KEYS = {
 }
 EFC_PROBE_SYSTEM_PROMPT = (
     "You are given several retrieved Wikipedia passages and a question. "
-    "Use the passages to answer the question. State the key evidence briefly so that named "
-    "bridge entities remain explicit. End with: So the answer is <answer>."
+    "Use at most two short evidence sentences. Keep the named bridge entity explicit. "
+    "If the passages are insufficient, state the bridge entity and use unknown as the answer. "
+    "For yes/no questions, answer yes when the compared attributes are the same and no when "
+    "they differ. Always end exactly with: So the answer is <answer>."
     "\nThe following are given documents.\n\n{reference}"
 )
 EFC_PROBE_USER_PROMPT = "Question: {question}"
 EFC_FINAL_SYSTEM_PROMPT = (
-    "Answer the question using only the useful evidence in the given documents. "
-    "For multi-hop questions, combine evidence from different passages. "
-    "For yes/no comparison questions, compare the requested attribute for both entities; "
-    "answer yes when the attributes are the same and no when they differ. "
-    "Output only the exact final answer, with no explanation or citations."
+    "Answer the question based on the given document."
+    "Only give me the answer and do not output any other words."
     "\nThe following are given documents.\n\n{reference}"
 )
-EFC_FINAL_USER_PROMPT = "Question: {question}\nFinal answer:"
+EFC_FINAL_USER_PROMPT = "Question: {question}"
 EFC_MISSING_SYSTEM_PROMPT = (
     "You are a retrieval query reformulator for multi-hop question answering. "
     "Output only a JSON array containing one search query."
 )
 EFC_PROMPT_CACHE_OUTPUT_KEYS = {
     "efc_rag_enabled",
+    "router_route",
     "route",
     "router_features",
     "probe_answer",
@@ -416,6 +425,7 @@ def build_config_dict(args):
             "redundancy_weight": args.redundancy_weight,
             "title_dedup_soft": args.title_dedup_soft,
             "max_same_title": args.max_same_title,
+            "original_seed_count": args.original_seed_count,
             "use_centroid_router": args.use_centroid_router,
             "save_efc_debug": args.save_efc_debug,
             "retrieval_cache_only": args.retrieval_cache_only,
@@ -2035,9 +2045,16 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
     for item, question, r0_docs, probe_answer, centroid in zip(
         dataset, questions, r0_groups, probe_answers, centroid_features
     ):
-        features = compute_router_features(question, r0_docs, probe_answer, centroid)
-        route = decide_route(features, force_route=force_route)
-        route = efc_route_with_availability(route, features, efc_config)
+        features = compute_router_features(
+            question,
+            r0_docs,
+            probe_answer,
+            centroid,
+            assume_multihop=config["dataset_name"].lower()
+            in {"hotpotqa", "2wikimultihopqa", "musique"},
+        )
+        router_route = decide_route(features, force_route=force_route)
+        route = efc_route_with_availability(router_route, features, efc_config)
         records.append(
             {
                 "item": item,
@@ -2045,6 +2062,7 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
                 "r0_docs": r0_docs,
                 "probe_answer": probe_answer,
                 "features": features,
+                "router_route": router_route,
                 "route": route,
                 "qd_queries": [],
                 "missing_hop_query": "",
@@ -2174,6 +2192,7 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
                     record["question"],
                     record["features"],
                     [efc_doc_title(doc) for doc in record["r0_docs"]],
+                    record["probe_answer"],
                 )
             elif mode == "raw_y1":
                 record["missing_hop_query"] = (
@@ -2233,15 +2252,26 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
             cursor += 1
         candidate_pool = efc_merge_docs([record["r0_docs"]] + extra_groups)
         add_rrf_scores(candidate_pool, int(efc_config.get("rrf_k", 60)))
-        selected_docs, covered_roles = role_aware_pack(
-            candidate_pool,
-            record["question"],
-            record["probe_answer"],
-            record["features"],
-            final_topk,
-            record["route"],
-            efc_config,
-        )
+        if record["route"] == "direct":
+            selected_docs = select_ranked_title_diverse(
+                record["r0_docs"], final_topk, max_same_title=1
+            )
+            covered_roles = score_selected_roles(
+                selected_docs,
+                record["question"],
+                record["probe_answer"],
+                record["features"],
+            )
+        else:
+            selected_docs, covered_roles = role_aware_pack(
+                candidate_pool,
+                record["question"],
+                record["probe_answer"],
+                record["features"],
+                final_topk,
+                record["route"],
+                efc_config,
+            )
         support_recall, both_support_hit = efc_support_title_metrics(
             record["item"], selected_docs
         )
@@ -2257,6 +2287,7 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
 
     outputs = {
         "efc_rag_enabled": [],
+        "router_route": [],
         "route": [],
         "router_features": [],
         "probe_answer": [],
@@ -2289,6 +2320,7 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
     for record in records:
         selected_docs = record["selected_docs"]
         outputs["efc_rag_enabled"].append(True)
+        outputs["router_route"].append(record["router_route"])
         outputs["route"].append(record["route"])
         outputs["router_features"].append(record["features"])
         outputs["probe_answer"].append(record["probe_answer"])
@@ -2327,7 +2359,11 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
         )
         outputs["adaptive_k"].append(len(selected_docs))
         outputs["adaptive_gap_index"].append(None)
-        outputs["selection_method"].append("efc_role_aware")
+        outputs["selection_method"].append(
+            "efc_ranked_title_diverse"
+            if record["route"] == "direct"
+            else "efc_role_aware"
+        )
         outputs["query_decomposition_enabled"].append(False)
         outputs["efc_cost"].append(
             {
@@ -2357,6 +2393,15 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
 def log_efc_statistics(dataset, include_metrics=False):
     total = len(dataset)
     route_counts = Counter(dataset.route)
+    router_route_values = (
+        dataset.router_route
+        if total and "router_route" in dataset[0].output
+        else None
+    )
+    if router_route_values is not None:
+        print("EFC-RAG router decisions:")
+        for route, count in Counter(router_route_values).items():
+            print(f"  {route}: {count} / {count / max(1, total):.4f}")
     print("EFC-RAG route statistics:")
     for route in ("direct", "static_qd", "generation_guided"):
         count = route_counts.get(route, 0)
@@ -3621,6 +3666,10 @@ def run(args):
                 raise ValueError(f"--{arg_name} must be positive.")
         if args.probe_topk > args.initial_topk:
             raise ValueError("--probe_topk cannot exceed --initial_topk.")
+        if not 0 <= args.original_seed_count <= args.final_topk:
+            raise ValueError(
+                "--original_seed_count must be between 0 and --final_topk."
+            )
         for arg_name in (
             "rrf_weight",
             "role_weight",
@@ -3814,11 +3863,23 @@ def parse_args():
         choices=["heuristic", "llm", "raw_y1"],
         default=DEFAULT_RUN_CONFIG["missing_query_mode"],
     )
-    parser.add_argument("--rrf_weight", type=float, default=1.0)
-    parser.add_argument("--role_weight", type=float, default=0.30)
-    parser.add_argument("--title_weight", type=float, default=0.05)
-    parser.add_argument("--source_weight", type=float, default=0.05)
-    parser.add_argument("--redundancy_weight", type=float, default=0.05)
+    parser.add_argument(
+        "--rrf_weight", type=float, default=DEFAULT_RUN_CONFIG["rrf_weight"]
+    )
+    parser.add_argument(
+        "--role_weight", type=float, default=DEFAULT_RUN_CONFIG["role_weight"]
+    )
+    parser.add_argument(
+        "--title_weight", type=float, default=DEFAULT_RUN_CONFIG["title_weight"]
+    )
+    parser.add_argument(
+        "--source_weight", type=float, default=DEFAULT_RUN_CONFIG["source_weight"]
+    )
+    parser.add_argument(
+        "--redundancy_weight",
+        type=float,
+        default=DEFAULT_RUN_CONFIG["redundancy_weight"],
+    )
     title_dedup_group = parser.add_mutually_exclusive_group()
     title_dedup_group.add_argument(
         "--title_dedup_soft", dest="title_dedup_soft", action="store_true"
@@ -3827,7 +3888,14 @@ def parse_args():
         "--no_title_dedup_soft", dest="title_dedup_soft", action="store_false"
     )
     parser.set_defaults(title_dedup_soft=DEFAULT_RUN_CONFIG["title_dedup_soft"])
-    parser.add_argument("--max_same_title", type=int, default=2)
+    parser.add_argument(
+        "--max_same_title", type=int, default=DEFAULT_RUN_CONFIG["max_same_title"]
+    )
+    parser.add_argument(
+        "--original_seed_count",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["original_seed_count"],
+    )
     parser.add_argument("--use_centroid_router", action="store_true")
     parser.add_argument("--save_efc_debug", action="store_true")
     parser.add_argument(
