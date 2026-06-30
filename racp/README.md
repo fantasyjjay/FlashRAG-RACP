@@ -259,14 +259,27 @@ EFC-RAG 是免 cross-encoder reranker 的多跳流程：
 
 ```text
 原问题 top20 -> top5 probe generation -> HotpotQA 多跳 router
--> generation-guided / static-QD fallback
+-> probe 驱动的 generation-guided / static-QD 辅助
 -> query 级 RRF -> 原始证据保留 + 角色感知 top6 打包 -> 最终生成
 ```
 
-默认配置使用 8B planner 生成 missing-hop query；无效或与原问题过于相似的 query
-会自动回退到 static-QD。输出同时记录 `router_route`（原始路由决策）和 `route`
-（回退后的实际执行路由）。EFC 在加载 planner 前会释放 probe，并将 HF 实际生成
-batch 限制为 8。单张
+当前主干遵循 IterRetGen 的思想：Top5 首先生成 `probe_answer`，只要 probe 暴露出
+桥接实体，8B planner 就把该生成结果压缩成 missing-hop query，再执行下一轮
+检索。EFC 默认生成 1 条 missing-hop query；`--missing_query_num 2` 可以显式开启
+多 query 消融，至少 1 条有效即可继续检索，并将多条 query 的结果一起合并打包。
+当前 smoke 中两条 query 增加了候选噪声和检索成本，因此不作为默认值。无效或与
+原问题过于相似的 query 会先用桥接实体和目标属性进行 heuristic 修复。
+
+static-QD 现在是无新桥接实体时的辅助模块：probe 失败或不确定时仍会回到
+static-QD，避免把少数可由拆分 query 补到的样本直接丢给原始证据。保留
+`--static_bridge_evidence_topk`、`--static_bridge_original_count` 和
+`--static_bridge_qd_count` 主要用于强制 static-QD 消融。
+
+输出同时记录 `router_route`、实际 `route`、`missing_query_strategy`、
+`planner_failure_reason` 和 `planner_raw_outputs`。EFC 在加载 planner 前会释放 probe，
+并将 planner 的 HF 实际生成 batch 限制为 8。`--stage full` 会在检索准备完成后
+自动启动一个干净的 vLLM 子进程完成最终回答，避免同一 CUDA 进程重复初始化
+vLLM；`--generate_gpu_memory_utilization` 默认是 `0.85`。单张
 RTX 4090 上同时保留 BGE、使用 1024-token 输入和 96-token 输出的压力测试峰值约
 18.13 GiB；batch 16 峰值约 20.04 GiB，显存余量较小，因此不作为默认值：
 
@@ -283,16 +296,21 @@ python racp/run_racp.py \
   --final_topk 6 \
   --enable_generation_guided \
   --enable_static_qd_fallback \
+  --missing_query_num 1 \
   --missing_query_mode llm \
   --planner_batch_size 32 \
-  --original_seed_count 3 \
+  --original_seed_count 4 \
+  --static_bridge_evidence_topk 5 \
+  --static_bridge_original_count 4 \
+  --static_bridge_qd_count 2 \
   --title_dedup_soft \
   --test_sample_num 50 \
   --save_note efc-smoke-50
 ```
 
 prepare 输出会保存 `probe_answer`、路由特征、扩展 query、候选来源、角色分数、
-最终标题和成本统计。需要完整候选池时增加 `--save_efc_debug`，另存
+planner 原始输出、失败原因、最终标题和成本统计。需要完整候选池时增加
+`--save_efc_debug`，另存
 `efc_debug.json`。生成与评测仍使用同一目录中的 prompt cache：
 
 ```bash
@@ -310,7 +328,7 @@ python racp/run_racp.py \
 --force_route generation_guided
 ```
 
-扩展路由默认先保留 3 篇原始检索证据，再补充角色覆盖文档，避免新 query 把已有
+扩展路由默认先保留 4 篇原始检索证据，再补充角色覆盖文档，避免新 query 把已有
 支持文档挤出上下文。角色、标题、来源和冗余项可通过 `--role_weight`、`--title_weight`、
 `--source_weight`、`--redundancy_weight` 设为 0 做消融；`--rrf_weight 1`
 保留基础 RRF 排序。`--missing_query_mode` 还支持 `llm` 和 `raw_y1`。
@@ -339,10 +357,15 @@ python racp/run_racp.py \
   --no_reranker \
   --initial_topk 20 \
   --probe_topk 5 \
-  --final_topk 5 \
+  --final_topk 6 \
   --enable_generation_guided \
   --enable_static_qd_fallback \
-  --missing_query_mode heuristic \
+  --missing_query_num 1 \
+  --missing_query_mode llm \
+  --original_seed_count 4 \
+  --static_bridge_evidence_topk 5 \
+  --static_bridge_original_count 4 \
+  --static_bridge_qd_count 2 \
   --title_dedup_soft \
   --use_retrieval_cache \
   --retrieval_cache_path racp/output/cache/hotpotqa_dev_bge_large_no_rerank_top20_retrieval_cache.json \
@@ -380,7 +403,7 @@ python racp/run_racp.py \
   --no_reranker \
   --enable_generation_guided \
   --enable_static_qd_fallback \
-  --missing_query_mode heuristic \
+  --missing_query_mode llm \
   --title_dedup_soft \
   --retrieval_cache_only \
   --retrieval_cache_path racp/output/hotpotqa_YYYY_MM_DD_HH_MM_efc-hotpotqa-full/retrieval_cache.json \

@@ -2,6 +2,7 @@ import sys
 import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -20,8 +21,16 @@ from racp.efc import (
     probe_answer_is_bad,
     role_aware_pack,
     select_ranked_title_diverse,
+    static_bridge_pack,
 )
-from racp.run_racp import EFC_CacheOnlyRetriever, release_generator
+from racp.run_racp import (
+    EFC_CacheOnlyRetriever,
+    build_efc_static_bridge_prompt,
+    build_efc_missing_prompt,
+    build_full_generate_command,
+    parse_planner_output,
+    release_generator,
+)
 
 
 def make_doc(doc_id, title, text, rank, source="original", query_id="original"):
@@ -87,6 +96,170 @@ def test_uncertain_probe_with_bridge_entity_expands_generation_guided():
     ) == "Shirley Temple government position"
 
 
+def test_confident_multihop_probe_still_drives_next_retrieval_hop():
+    docs = [
+        make_doc("1", "Bright Eyes", "The film starred Shirley Temple.", 1),
+        make_doc("2", "Bright Eyes soundtrack", "The film includes a famous song.", 2),
+    ]
+    question = "What government position was held by the child star in Bright Eyes?"
+    probe = "The child star was Shirley Temple. So the answer is ambassador."
+
+    features = compute_router_features(
+        question, docs, probe, assume_multihop=True
+    )
+
+    assert features["y1_has_new_entity"]
+    assert decide_route(features) == "generation_guided"
+
+
+def test_confident_probe_without_new_entity_keeps_existing_evidence():
+    docs = [
+        make_doc(
+            "1",
+            "Virginia Commonwealth University",
+            "Virginia Commonwealth University was founded in 1838.",
+            1,
+        ),
+    ]
+    question = "What year was Virginia Commonwealth University founded?"
+    probe = (
+        "the institution was established in 1838 after its predecessor opened. "
+        "So the answer is 1838."
+    )
+
+    features = compute_router_features(
+        question, docs, probe, assume_multihop=True
+    )
+
+    assert not features["y1_has_new_entity"]
+    assert not features["y1_uncertain"]
+    assert decide_route(features) == "direct"
+
+
+def test_bad_bridge_probe_without_new_entity_keeps_static_qd_fallback():
+    docs = [
+        make_doc("1", "Star and Dagger", "Star and Dagger was a band.", 1),
+        make_doc("2", "Star and Dagger discography", "Album information.", 2),
+    ]
+    question = "Who did the Star and Dagger bass player marry?"
+    probe = "The retrieved documents do not say. So the answer is unknown."
+
+    features = compute_router_features(
+        question, docs, probe, assume_multihop=True
+    )
+
+    assert features["question_type"] == "bridge"
+    assert not features["y1_has_new_entity"]
+    assert features["y1_bad"]
+    assert decide_route(features) == "static_qd"
+
+
+def test_bad_constraint_probe_without_new_entity_keeps_static_qd():
+    docs = [
+        make_doc("1", "Kentucky Writers Hall of Fame", "A literary hall of fame.", 1),
+        make_doc("2", "Dim Gray Bar Press", "An independent publisher.", 2),
+    ]
+    question = (
+        "Which Kentucky Writers Hall of Fame author has had works published "
+        "by Dim Gray Bar Press?"
+    )
+    probe = "The retrieved documents do not identify the author. So the answer is unknown."
+
+    features = compute_router_features(
+        question, docs, probe, assume_multihop=True
+    )
+
+    assert features["question_type"] == "constraint"
+    assert not features["y1_has_new_entity"]
+    assert features["y1_bad"]
+    assert decide_route(features) == "static_qd"
+
+
+def test_bad_comparison_probe_without_new_entity_uses_static_qd():
+    docs = [
+        make_doc("1", "Scott Derrickson", "Scott Derrickson is a director.", 1),
+        make_doc("2", "Film director", "A director controls a film's artistic aspects.", 2),
+    ]
+    question = "Were Scott Derrickson and Ed Wood of the same nationality?"
+    probe = "The retrieved documents do not provide enough evidence. So the answer is unknown."
+
+    features = compute_router_features(
+        question, docs, probe, assume_multihop=True
+    )
+
+    assert features["question_type"] == "comparison"
+    assert not features["y1_has_new_entity"]
+    assert features["y1_bad"]
+    assert decide_route(features) == "static_qd"
+
+
+def test_missing_hop_prompt_uses_probe_generated_from_retrieved_evidence():
+    prompt = build_efc_missing_prompt(
+        "What government position was held by the child star in Bright Eyes?",
+        "The child star was Shirley Temple. So the answer is unknown.",
+        2,
+    )
+
+    assert "tentative reasoning" in prompt
+    assert "exactly 2 missing-hop search queries" in prompt
+    assert "The child star was Shirley Temple." in prompt
+
+
+def test_static_bridge_prompt_uses_initial_retrieved_evidence():
+    docs = [
+        make_doc(
+            "1",
+            "Star and Dagger",
+            "Star and Dagger was a band with Sean Yseult on bass.",
+            1,
+        ),
+        make_doc("2", "Sean Yseult", "Sean Yseult is an American musician.", 2),
+    ]
+    prompt = build_efc_static_bridge_prompt(
+        "Who did the Star and Dagger bass player marry?",
+        docs,
+        2,
+    )
+
+    assert "Initially retrieved evidence" in prompt
+    assert "Star and Dagger" in prompt
+    assert "Sean Yseult" in prompt
+    assert "bridge entities" in prompt
+
+
+def test_missing_hop_parser_accepts_query_dict_and_ignores_extra_invalid_items():
+    parsed = parse_planner_output(
+        '{"query": "Shirley Temple government position"}',
+        "What government position was held by the child star in Bright Eyes?",
+        1,
+    )
+    parsed_with_extra = parse_planner_output(
+        '["Shirley Temple government position", 42]',
+        "What government position was held by the child star in Bright Eyes?",
+        1,
+    )
+    parsed_list_of_dicts = parse_planner_output(
+        '[{"query": "Shirley Temple government position"}]',
+        "What government position was held by the child star in Bright Eyes?",
+        1,
+    )
+
+    assert parsed == ["Shirley Temple government position"]
+    assert parsed_with_extra == ["Shirley Temple government position"]
+    assert parsed_list_of_dicts == ["Shirley Temple government position"]
+
+
+def test_missing_hop_parser_accepts_partial_query_list_when_allowed():
+    parsed = parse_planner_output(
+        '["Shirley Temple government position"]',
+        "What government position was held by the child star in Bright Eyes?",
+        2,
+        min_query_num=1,
+    )
+
+    assert parsed == ["Shirley Temple government position"]
+
+
 def test_merge_and_rrf_preserve_multi_query_provenance():
     original = make_doc("1", "Alpha", "Original evidence.", 2)
     expanded = make_doc(
@@ -115,6 +288,36 @@ def test_truncated_probe_answer_is_bad():
         "Were Scott Derrickson and Ed Wood of the same nationality?",
         "Both people were American. So the answer is No, they were",
     )
+
+
+def test_numeric_probe_answer_is_not_mistaken_for_truncation():
+    assert not probe_answer_is_bad(
+        "What year was Virginia Commonwealth University founded?",
+        "the institution was established in 1838. So the answer is 1838.",
+    )
+
+
+def test_full_generation_restarts_in_clean_vllm_process():
+    command = build_full_generate_command(
+        SimpleNamespace(
+            gpu_id="3",
+            generate_gpu_memory_utilization=0.85,
+        ),
+        Path("/tmp/efc prompt cache.json"),
+    )
+
+    assert command[0] == sys.executable
+    assert command[2:4] == ["--stage", "generate"]
+    assert command[4:6] == [
+        "--prompt_cache_path",
+        "/tmp/efc prompt cache.json",
+    ]
+    assert command[-4:] == [
+        "--gpu_id",
+        "3",
+        "--gpu_memory_utilization",
+        "0.85",
+    ]
 
 
 def test_contradictory_yes_no_probe_is_bad():
@@ -293,3 +496,43 @@ def test_role_packing_can_reserve_original_evidence():
     )
 
     assert sum("original" in doc["sources"] for doc in selected) >= 3
+
+
+def test_static_bridge_pack_uses_original_and_qd_quotas():
+    originals = [
+        make_doc(str(index), f"Original {index}", "Original evidence.", index)
+        for index in range(1, 7)
+    ]
+    qd_docs = [
+        make_doc(
+            f"q{index}",
+            f"QD {index}",
+            "Query decomposition evidence.",
+            index,
+            source="qd",
+            query_id=f"qd_{index - 1}",
+        )
+        for index in range(1, 4)
+    ]
+    pool = add_rrf_scores(originals + qd_docs)
+    features = compute_router_features(
+        "Who did the Star and Dagger bass player marry?",
+        originals,
+        "The answer is unknown.",
+        assume_multihop=True,
+    )
+
+    selected, _ = static_bridge_pack(
+        pool,
+        "Who did the Star and Dagger bass player marry?",
+        "The answer is unknown.",
+        features,
+        final_topk=6,
+        config={
+            "static_bridge_original_count": 4,
+            "static_bridge_qd_count": 2,
+        },
+    )
+
+    assert sum("original" in doc["sources"] for doc in selected) == 4
+    assert sum("qd" in doc["sources"] for doc in selected) == 2

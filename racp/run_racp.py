@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import traceback
 from collections import Counter
@@ -59,6 +60,7 @@ from racp.efc import (
     role_coverage_ratio,
     score_selected_roles,
     select_ranked_title_diverse,
+    static_bridge_pack,
 )
 
 
@@ -91,6 +93,7 @@ DEFAULT_RUN_CONFIG = {
     "probe_max_tokens": 128,
     "final_topk": 6,
     "qd_num": 2,
+    "missing_query_num": 1,
     "qd_topk": 5,
     "gen_topk": 10,
     "planner_model": "Llama-3.1-8B-Instruct",
@@ -105,7 +108,10 @@ DEFAULT_RUN_CONFIG = {
     "source_weight": 0.05,
     "redundancy_weight": 0.01,
     "max_same_title": 2,
-    "original_seed_count": 3,
+    "original_seed_count": 4,
+    "static_bridge_evidence_topk": 5,
+    "static_bridge_original_count": 4,
+    "static_bridge_qd_count": 2,
 }
 
 PLANNER_STOP_WORDS = [
@@ -199,6 +205,9 @@ EFC_PROMPT_CACHE_OUTPUT_KEYS = {
     "probe_context_doc_uids",
     "qd_queries",
     "missing_hop_query",
+    "missing_hop_queries",
+    "missing_query_strategy",
+    "planner_failure_reason",
     "candidate_pool_count",
     "candidate_pool_summary",
     "selected_doc_uids",
@@ -378,7 +387,7 @@ def build_config_dict(args):
             "seed_topk": args.seed_topk,
             "extra_topk": args.extra_topk,
             "static_qd_num": args.static_qd_num,
-            "missing_query_num": args.missing_query_num,
+            "missing_query_num": args.missing_query_num or 1,
             "original_pool_topk": args.original_pool_topk,
             "rrf_k": args.rrf_k,
             "route_low_conf_gap": args.route_low_conf_gap,
@@ -416,6 +425,9 @@ def build_config_dict(args):
             "qd_topk": args.qd_topk,
             "enable_generation_guided": args.enable_generation_guided,
             "gen_topk": args.gen_topk,
+            "missing_query_num": (
+                args.missing_query_num or DEFAULT_RUN_CONFIG["missing_query_num"]
+            ),
             "missing_query_mode": args.missing_query_mode,
             "rrf_k": args.rrf_k,
             "rrf_weight": args.rrf_weight,
@@ -426,6 +438,9 @@ def build_config_dict(args):
             "title_dedup_soft": args.title_dedup_soft,
             "max_same_title": args.max_same_title,
             "original_seed_count": args.original_seed_count,
+            "static_bridge_evidence_topk": args.static_bridge_evidence_topk,
+            "static_bridge_original_count": args.static_bridge_original_count,
+            "static_bridge_qd_count": args.static_bridge_qd_count,
             "use_centroid_router": args.use_centroid_router,
             "save_efc_debug": args.save_efc_debug,
             "retrieval_cache_only": args.retrieval_cache_only,
@@ -883,39 +898,53 @@ def extract_json_arrays(text):
     return arrays
 
 
-def normalize_subquery_list(candidates, question, subquery_num):
+def normalize_subquery_list(candidates, question, subquery_num, min_query_num=None):
+    min_query_num = subquery_num if min_query_num is None else min_query_num
     normalized_question = " ".join(question.lower().split())
     subqueries = []
     seen = set()
 
     for item in candidates:
+        if isinstance(item, dict):
+            item = (
+                item.get("query")
+                or item.get("subquery")
+                or item.get("text")
+                or item.get("search_query")
+            )
         if not isinstance(item, str):
-            return []
+            continue
         subquery = " ".join(item.strip().strip("\"'`").split())
         normalized = subquery.lower()
         if not subquery or normalized == normalized_question or normalized in seen:
-            return []
+            continue
         if not is_search_like_query(subquery):
-            return []
+            continue
         seen.add(normalized)
         subqueries.append(subquery)
+        if len(subqueries) == subquery_num:
+            break
 
-    if len(subqueries) != subquery_num:
-        return []
-    return subqueries
+    return subqueries if len(subqueries) >= min_query_num else []
 
 
-def parse_planner_output(output, question, subquery_num):
+def parse_planner_output(output, question, subquery_num, min_query_num=None):
+    min_query_num = subquery_num if min_query_num is None else min_query_num
     import json as json_module
     import re
 
     text = (output or "").strip()
     for array in extract_json_arrays(text):
-        if len(array) != subquery_num:
+        if len(array) < min_query_num:
             continue
         if any(not isinstance(item, str) or not item.strip() for item in array):
             continue
-        subqueries = normalize_subquery_list(array, question, subquery_num)
+        subqueries = normalize_subquery_list(
+            array,
+            question,
+            subquery_num,
+            min_query_num=min_query_num,
+        )
         if subqueries:
             return subqueries
 
@@ -924,7 +953,14 @@ def parse_planner_output(output, question, subquery_num):
         if isinstance(parsed, list):
             candidates = parsed
         elif isinstance(parsed, dict):
-            candidates = parsed.get("subqueries") or parsed.get("queries") or []
+            candidates = (
+                parsed.get("subqueries")
+                or parsed.get("queries")
+                or parsed.get("query")
+                or []
+            )
+            if isinstance(candidates, str):
+                candidates = [candidates]
     except json_module.JSONDecodeError:
         candidates = []
 
@@ -940,7 +976,12 @@ def parse_planner_output(output, question, subquery_num):
                 continue
             candidates.append(line)
 
-    return normalize_subquery_list(candidates[:subquery_num], question, subquery_num)
+    return normalize_subquery_list(
+        candidates[:subquery_num],
+        question,
+        subquery_num,
+        min_query_num=min_query_num,
+    )
 
 
 def normalize_qd_subquery_list(candidates, question, subquery_num):
@@ -1373,6 +1414,28 @@ def build_rs_mhr_missing_prompt(question, seed_docs, query_num):
     )
 
 
+def build_efc_static_bridge_prompt(question, seed_docs, query_num):
+    seed_parts = []
+    for idx, doc in enumerate(seed_docs, start=1):
+        title = efc_doc_title(doc)
+        evidence = doc_to_text(doc)[:360]
+        seed_parts.append(f"[Doc {idx}]\nTitle: {title}\nEvidence: {evidence}")
+    seed_text = "\n\n".join(seed_parts)
+    return (
+        f"Original question:\n{question}\n\n"
+        f"Initially retrieved evidence:\n{seed_text}\n\n"
+        f"Generate exactly {query_num} retrieval-oriented bridge queries.\n\n"
+        "Rules:\n"
+        "1. Do not decompose the question only from its surface wording.\n"
+        "2. Use the initially retrieved titles and evidence to identify likely bridge entities.\n"
+        "3. Each query should combine a concrete bridge entity with the missing target attribute.\n"
+        "4. Prefer concise keyword queries over full questions.\n"
+        "5. Do not answer the original question.\n"
+        "6. Output only a JSON array of strings.\n\n"
+        "Output:"
+    )
+
+
 def rs_mhr_query_too_similar(query, question):
     normalized_query = " ".join(query.lower().split())
     normalized_question = " ".join(question.lower().split())
@@ -1387,9 +1450,11 @@ def generate_rs_mhr_queries(
     planner_model_path,
     system_prompt,
     reject_similar=False,
+    min_query_num=None,
     planner_batch_size=32,
     planner_max_tokens=96,
 ):
+    min_query_num = query_num if min_query_num is None else min_query_num
     if not questions:
         return []
     if planner_batch_size < 1:
@@ -1408,14 +1473,32 @@ def generate_rs_mhr_queries(
         )
     records = []
     for question, raw_output in zip(questions, raw_outputs):
-        queries = parse_planner_output(raw_output, question, query_num)
-        if reject_similar and any(rs_mhr_query_too_similar(query, question) for query in queries):
-            queries = []
+        queries = parse_planner_output(
+            raw_output,
+            question,
+            query_num,
+            min_query_num=min_query_num,
+        )
+        failure_reason = ""
+        if reject_similar:
+            before_count = len(queries)
+            queries = [
+                query
+                for query in queries
+                if not rs_mhr_query_too_similar(query, question)
+            ]
+            if before_count and len(queries) < min_query_num:
+                failure_reason = "query_too_similar"
+        if not failure_reason and len(queries) < min_query_num:
+            failure_reason = (
+                "empty_or_invalid_output" if raw_output.strip() else "empty_output"
+            )
         records.append(
             {
                 "raw_planner_output": raw_output,
                 "queries": queries,
-                "valid": len(queries) == query_num,
+                "valid": len(queries) >= min_query_num,
+                "failure_reason": failure_reason,
             }
         )
     return records
@@ -1902,15 +1985,30 @@ def release_generator(generator):
         pass
 
 
-def build_efc_missing_prompt(question, probe_answer):
+def build_efc_missing_prompt(question, probe_answer, query_num=1):
+    if query_num == 1:
+        return (
+            "Given the original question and tentative reasoning, generate exactly one "
+            "missing-hop search query.\n\n"
+            "Rules:\n"
+            "1. Use the bridge entity from the tentative reasoning if available.\n"
+            "2. Ask for the missing factual attribute.\n"
+            "3. Do not answer the question.\n"
+            "4. Output only a JSON array with one string.\n\n"
+            f"Question:\n{question}\n\n"
+            f"Tentative reasoning:\n{probe_answer}\n\n"
+            "Output:"
+        )
+    noun = "query" if query_num == 1 else "queries"
     return (
-        "Given the original question and tentative reasoning, generate exactly one "
-        "missing-hop search query.\n\n"
+        "Given the original question and tentative reasoning, generate exactly "
+        f"{query_num} missing-hop search {noun}.\n\n"
         "Rules:\n"
         "1. Use the bridge entity from the tentative reasoning if available.\n"
         "2. Ask for the missing factual attribute.\n"
-        "3. Do not answer the question.\n"
-        "4. Output only a JSON array with one string.\n\n"
+        "3. Prefer concise keyword queries over full questions.\n"
+        "4. Do not answer the question.\n"
+        f"5. Output only a JSON array with {query_num} strings.\n\n"
         f"Question:\n{question}\n\n"
         f"Tentative reasoning:\n{probe_answer}\n\n"
         "Output:"
@@ -2066,13 +2164,26 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
                 "route": route,
                 "qd_queries": [],
                 "missing_hop_query": "",
+                "missing_hop_queries": [],
+                "missing_query_strategy": "none",
                 "query_records": [],
                 "planner_call_count": 0,
                 "planner_failed": False,
+                "planner_failure_reason": "",
+                "planner_raw_outputs": [],
             }
         )
 
     static_records = [record for record in records if record["route"] == "static_qd"]
+    static_bridge_records = [
+        record
+        for record in static_records
+        if record["features"].get("question_type") in {"bridge", "constraint"}
+    ]
+    static_bridge_record_ids = {id(record) for record in static_bridge_records}
+    static_plain_records = [
+        record for record in static_records if id(record) not in static_bridge_record_ids
+    ]
     llm_missing_records = [
         record
         for record in records
@@ -2087,13 +2198,13 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
             planner_model = efc_config.get("planner_model", "Llama-3.1-8B-Instruct")
             planner_model_path = config["model2path"].get(planner_model, planner_model)
 
-        if static_records:
+        if static_plain_records:
             query_num = int(efc_config.get("qd_num", 2))
             planner_outputs = generate_rs_mhr_queries(
-                [record["question"] for record in static_records],
+                [record["question"] for record in static_plain_records],
                 [
                     build_rs_mhr_static_prompt(record["question"], query_num)
-                    for record in static_records
+                    for record in static_plain_records
                 ],
                 query_num,
                 planner_generator,
@@ -2102,47 +2213,129 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
                 planner_batch_size=int(efc_config["planner_batch_size"]),
                 planner_max_tokens=int(efc_config["planner_max_tokens"]),
             )
-            for record, planner_output in zip(static_records, planner_outputs):
+            for record, planner_output in zip(static_plain_records, planner_outputs):
                 record["planner_call_count"] += 1
+                record["planner_raw_outputs"].append(
+                    planner_output["raw_planner_output"]
+                )
                 if planner_output["valid"]:
                     record["qd_queries"] = planner_output["queries"]
+                    record["missing_query_strategy"] = "static_qd"
                 else:
                     record["planner_failed"] = True
+                    record["planner_failure_reason"] = (
+                        f"static_qd:{planner_output['failure_reason']}"
+                    )
+                    record["route"] = "direct"
+
+        if static_bridge_records:
+            query_num = int(efc_config.get("qd_num", 2))
+            evidence_topk = int(efc_config.get("static_bridge_evidence_topk", 5))
+            planner_outputs = generate_rs_mhr_queries(
+                [record["question"] for record in static_bridge_records],
+                [
+                    build_efc_static_bridge_prompt(
+                        record["question"],
+                        record["r0_docs"][:evidence_topk],
+                        query_num,
+                    )
+                    for record in static_bridge_records
+                ],
+                query_num,
+                planner_generator,
+                planner_model_path,
+                RS_MHR_MISSING_SYSTEM_PROMPT,
+                planner_batch_size=int(efc_config["planner_batch_size"]),
+                planner_max_tokens=int(efc_config["planner_max_tokens"]),
+            )
+            for record, planner_output in zip(static_bridge_records, planner_outputs):
+                record["planner_call_count"] += 1
+                record["planner_raw_outputs"].append(
+                    planner_output["raw_planner_output"]
+                )
+                if planner_output["valid"]:
+                    record["qd_queries"] = planner_output["queries"]
+                    record["missing_query_strategy"] = "static_qd_bridge_evidence"
+                else:
+                    record["planner_failed"] = True
+                    record["planner_failure_reason"] = (
+                        f"static_qd_bridge:{planner_output['failure_reason']}"
+                    )
                     record["route"] = "direct"
 
         if llm_missing_records:
+            missing_query_num = int(efc_config.get("missing_query_num", 1))
             planner_outputs = generate_rs_mhr_queries(
                 [record["question"] for record in llm_missing_records],
                 [
-                    build_efc_missing_prompt(record["question"], record["probe_answer"])
+                    build_efc_missing_prompt(
+                        record["question"],
+                        record["probe_answer"],
+                        missing_query_num,
+                    )
                     for record in llm_missing_records
                 ],
-                1,
+                missing_query_num,
                 planner_generator,
                 planner_model_path,
                 EFC_MISSING_SYSTEM_PROMPT,
                 reject_similar=True,
+                min_query_num=1,
                 planner_batch_size=int(efc_config["planner_batch_size"]),
                 planner_max_tokens=int(efc_config["planner_max_tokens"]),
             )
             for record, planner_output in zip(llm_missing_records, planner_outputs):
                 record["planner_call_count"] += 1
+                record["planner_raw_outputs"].append(
+                    planner_output["raw_planner_output"]
+                )
                 if planner_output["valid"]:
-                    record["missing_hop_query"] = planner_output["queries"][0]
+                    record["missing_hop_queries"] = planner_output["queries"]
+                    record["missing_hop_query"] = record["missing_hop_queries"][0]
+                    record["missing_query_strategy"] = "llm_missing_hop"
                 else:
                     record["planner_failed"] = True
-                    record["route"] = (
-                        "static_qd"
-                        if efc_config.get("enable_static_qd_fallback", False)
-                        else "direct"
+                    record["planner_failure_reason"] = (
+                        f"missing_hop:{planner_output['failure_reason']}"
                     )
+                    repaired_query = build_heuristic_missing_query(
+                        record["question"],
+                        record["features"],
+                        [efc_doc_title(doc) for doc in record["r0_docs"]],
+                        record["probe_answer"],
+                    )
+                    if repaired_query:
+                        record["missing_hop_queries"] = [repaired_query]
+                        record["missing_hop_query"] = repaired_query
+                        record["missing_query_strategy"] = "heuristic_repair"
+                    else:
+                        record["route"] = (
+                            "static_qd"
+                            if efc_config.get("enable_static_qd_fallback", False)
+                            else "direct"
+                        )
 
         release_generator(planner_generator)
         del planner_generator
 
     # LLM missing-query failures can fall back to static QD after the first planner pass.
     late_static_records = [
-        record for record in records if record["route"] == "static_qd" and not record["qd_queries"]
+        record
+        for record in records
+        if record["route"] == "static_qd" and not record["qd_queries"]
+    ]
+    late_static_bridge_records = [
+        record
+        for record in late_static_records
+        if record["features"].get("question_type") in {"bridge", "constraint"}
+    ]
+    late_static_bridge_record_ids = {
+        id(record) for record in late_static_bridge_records
+    }
+    late_static_plain_records = [
+        record
+        for record in late_static_records
+        if id(record) not in late_static_bridge_record_ids
     ]
     if late_static_records:
         planner_generator = get_efc_planner(config)
@@ -2151,26 +2344,90 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
             planner_model = efc_config.get("planner_model", "Llama-3.1-8B-Instruct")
             planner_model_path = config["model2path"].get(planner_model, planner_model)
         query_num = int(efc_config.get("qd_num", 2))
-        planner_outputs = generate_rs_mhr_queries(
-            [record["question"] for record in late_static_records],
-            [
-                build_rs_mhr_static_prompt(record["question"], query_num)
-                for record in late_static_records
-            ],
-            query_num,
-            planner_generator,
-            planner_model_path,
-            RS_MHR_STATIC_SYSTEM_PROMPT,
-            planner_batch_size=int(efc_config["planner_batch_size"]),
-            planner_max_tokens=int(efc_config["planner_max_tokens"]),
-        )
-        for record, planner_output in zip(late_static_records, planner_outputs):
-            record["planner_call_count"] += 1
-            if planner_output["valid"]:
-                record["qd_queries"] = planner_output["queries"]
-            else:
-                record["planner_failed"] = True
-                record["route"] = "direct"
+        if late_static_plain_records:
+            planner_outputs = generate_rs_mhr_queries(
+                [record["question"] for record in late_static_plain_records],
+                [
+                    build_rs_mhr_static_prompt(record["question"], query_num)
+                    for record in late_static_plain_records
+                ],
+                query_num,
+                planner_generator,
+                planner_model_path,
+                RS_MHR_STATIC_SYSTEM_PROMPT,
+                planner_batch_size=int(efc_config["planner_batch_size"]),
+                planner_max_tokens=int(efc_config["planner_max_tokens"]),
+            )
+            for record, planner_output in zip(
+                late_static_plain_records, planner_outputs
+            ):
+                record["planner_call_count"] += 1
+                record["planner_raw_outputs"].append(
+                    planner_output["raw_planner_output"]
+                )
+                if planner_output["valid"]:
+                    record["qd_queries"] = planner_output["queries"]
+                    record["missing_query_strategy"] = "static_qd_fallback"
+                else:
+                    record["planner_failed"] = True
+                    late_reason = (
+                        f"static_qd_fallback:{planner_output['failure_reason']}"
+                    )
+                    record["planner_failure_reason"] = ";".join(
+                        reason
+                        for reason in (
+                            record["planner_failure_reason"],
+                            late_reason,
+                        )
+                        if reason
+                    )
+                    record["route"] = "direct"
+        if late_static_bridge_records:
+            evidence_topk = int(efc_config.get("static_bridge_evidence_topk", 5))
+            planner_outputs = generate_rs_mhr_queries(
+                [record["question"] for record in late_static_bridge_records],
+                [
+                    build_efc_static_bridge_prompt(
+                        record["question"],
+                        record["r0_docs"][:evidence_topk],
+                        query_num,
+                    )
+                    for record in late_static_bridge_records
+                ],
+                query_num,
+                planner_generator,
+                planner_model_path,
+                RS_MHR_MISSING_SYSTEM_PROMPT,
+                planner_batch_size=int(efc_config["planner_batch_size"]),
+                planner_max_tokens=int(efc_config["planner_max_tokens"]),
+            )
+            for record, planner_output in zip(
+                late_static_bridge_records, planner_outputs
+            ):
+                record["planner_call_count"] += 1
+                record["planner_raw_outputs"].append(
+                    planner_output["raw_planner_output"]
+                )
+                if planner_output["valid"]:
+                    record["qd_queries"] = planner_output["queries"]
+                    record["missing_query_strategy"] = (
+                        "static_qd_bridge_evidence_fallback"
+                    )
+                else:
+                    record["planner_failed"] = True
+                    late_reason = (
+                        f"static_qd_bridge_fallback:"
+                        f"{planner_output['failure_reason']}"
+                    )
+                    record["planner_failure_reason"] = ";".join(
+                        reason
+                        for reason in (
+                            record["planner_failure_reason"],
+                            late_reason,
+                        )
+                        if reason
+                    )
+                    record["route"] = "direct"
         release_generator(planner_generator)
         del planner_generator
 
@@ -2194,18 +2451,27 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
                     [efc_doc_title(doc) for doc in record["r0_docs"]],
                     record["probe_answer"],
                 )
+                record["missing_hop_queries"] = (
+                    [record["missing_hop_query"]]
+                    if record["missing_hop_query"]
+                    else []
+                )
+                record["missing_query_strategy"] = "heuristic"
             elif mode == "raw_y1":
                 record["missing_hop_query"] = (
                     f"{record['question']}\n{record['probe_answer']}"
                 )
-            if record["missing_hop_query"]:
+                record["missing_hop_queries"] = [record["missing_hop_query"]]
+                record["missing_query_strategy"] = "raw_y1"
+            if record["missing_hop_queries"]:
                 record["query_records"] = [
                     {
                         "source": "generation_guided",
-                        "query": record["missing_hop_query"],
-                        "query_id": "gen_0",
+                        "query": query,
+                        "query_id": f"gen_{idx}",
                         "topk": int(efc_config.get("gen_topk", 10)),
                     }
+                    for idx, query in enumerate(record["missing_hop_queries"])
                 ]
             else:
                 record["route"] = (
@@ -2262,6 +2528,18 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
                 record["probe_answer"],
                 record["features"],
             )
+        elif (
+            record["route"] == "static_qd"
+            and record["features"].get("question_type") in {"bridge", "constraint"}
+        ):
+            selected_docs, covered_roles = static_bridge_pack(
+                candidate_pool,
+                record["question"],
+                record["probe_answer"],
+                record["features"],
+                final_topk,
+                efc_config,
+            )
         else:
             selected_docs, covered_roles = role_aware_pack(
                 candidate_pool,
@@ -2294,6 +2572,10 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
         "probe_context_doc_uids": [],
         "qd_queries": [],
         "missing_hop_query": [],
+        "missing_hop_queries": [],
+        "missing_query_strategy": [],
+        "planner_failure_reason": [],
+        "planner_raw_outputs": [],
         "candidate_pool_count": [],
         "candidate_pool_summary": [],
         "selected_doc_uids": [],
@@ -2329,6 +2611,10 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
         )
         outputs["qd_queries"].append(record["qd_queries"])
         outputs["missing_hop_query"].append(record["missing_hop_query"])
+        outputs["missing_hop_queries"].append(record["missing_hop_queries"])
+        outputs["missing_query_strategy"].append(record["missing_query_strategy"])
+        outputs["planner_failure_reason"].append(record["planner_failure_reason"])
+        outputs["planner_raw_outputs"].append(record["planner_raw_outputs"])
         outputs["candidate_pool_count"].append(len(record["candidate_pool"]))
         outputs["candidate_pool_summary"].append(
             efc_candidate_summary(record["candidate_pool"])
@@ -2377,6 +2663,9 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
                 "candidate_pool_count": len(record["candidate_pool"]),
                 "final_selected_count": len(selected_docs),
                 "planner_failure_count": int(record["planner_failed"]),
+                "planner_repair_count": int(
+                    record["missing_query_strategy"] == "heuristic_repair"
+                ),
             }
         )
         if efc_config.get("save_efc_debug", False):
@@ -2408,14 +2697,30 @@ def log_efc_statistics(dataset, include_metrics=False):
         print(f"  {route}: {count} / {count / total if total else 0.0:.4f}")
 
     costs = dataset.efc_cost
+    if total and "missing_query_strategy" in dataset[0].output:
+        print("EFC-RAG missing-query strategies:")
+        for strategy, count in Counter(dataset.missing_query_strategy).items():
+            print(f"  {strategy}: {count} / {count / total:.4f}")
+    if total and "planner_failure_reason" in dataset[0].output:
+        failure_reasons = Counter(
+            reason for reason in dataset.planner_failure_reason if reason
+        )
+        if failure_reasons:
+            print("EFC-RAG planner failure reasons:")
+            for reason, count in failure_reasons.items():
+                print(f"  {reason}: {count}")
     print("EFC-RAG average costs:")
     for key in (
         "total_llm_calls",
         "total_retrieval_calls",
         "candidate_pool_count",
         "final_selected_count",
+        "planner_failure_count",
+        "planner_repair_count",
     ):
-        average = sum(float(cost[key]) for cost in costs) / total if total else 0.0
+        average = (
+            sum(float(cost.get(key, 0.0)) for cost in costs) / total if total else 0.0
+        )
         print(f"  {key}: {average:.4f}")
     average_role_coverage = (
         sum(float(value) for value in dataset.role_coverage_ratio) / total if total else 0.0
@@ -3505,6 +3810,40 @@ def run_generate(config, args):
     return dataset
 
 
+def build_full_generate_command(args, prompt_cache_path):
+    return [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--stage",
+        "generate",
+        "--prompt_cache_path",
+        str(Path(prompt_cache_path).resolve()),
+        "--gpu_id",
+        str(args.gpu_id),
+        "--gpu_memory_utilization",
+        str(args.generate_gpu_memory_utilization),
+    ]
+
+
+def run_full_vllm_generate(config, args, dataset):
+    prompt_cache_path = Path(config["save_dir"]) / "prompt_cache.json"
+    save_prompt_cache(dataset, prompt_cache_path, compact_efc=True)
+
+    command = build_full_generate_command(args, prompt_cache_path)
+    print("EFC-RAG final generation: launching a clean vLLM subprocess.")
+    print(
+        f"  gpu_memory_utilization: {args.generate_gpu_memory_utilization}"
+    )
+    subprocess.run(command, cwd=str(REPO_DIR), check=True)
+
+    result_path = Path(config["save_dir"]) / "intermediate_data.json"
+    if not result_path.exists():
+        raise RuntimeError(
+            f"vLLM generation finished without producing {result_path}."
+        )
+    return load_prompt_cache(config, result_path)
+
+
 def run_full(config, args):
     from flashrag.utils import get_generator
 
@@ -3523,14 +3862,9 @@ def run_full(config, args):
                 torch.cuda.empty_cache()
         except ImportError:
             pass
-        final_generator_config = dict(
-            config.final_config if hasattr(config, "final_config") else config
-        )
-        # CUDA was initialized by retrieval, so a second vLLM engine would force
-        # spawn and re-execute the entrypoint. The split prepare/generate flow
-        # still uses vLLM in both clean processes.
-        final_generator_config["framework"] = "hf"
-        generator = get_generator(final_generator_config)
+        if config["framework"] == "vllm":
+            return run_full_vllm_generate(config, args, dataset)
+        generator = get_generator(config)
     elif rs_mhr_config.get("enabled", False):
         dataset = load_split(config, args.split)
         planner_generator = (
@@ -3619,8 +3953,14 @@ def run(args):
     ):
         if getattr(args, arg_name) < 1:
             raise ValueError(f"--{arg_name} must be positive.")
-    if not 0 < args.gpu_memory_utilization <= 1:
-        raise ValueError("--gpu_memory_utilization must be in (0, 1].")
+    if args.missing_query_num is not None and args.missing_query_num < 1:
+        raise ValueError("--missing_query_num must be positive.")
+    for arg_name in (
+        "gpu_memory_utilization",
+        "generate_gpu_memory_utilization",
+    ):
+        if not 0 < getattr(args, arg_name) <= 1:
+            raise ValueError(f"--{arg_name} must be in (0, 1].")
     if args.qd_subquery_rerank_weight < 0:
         raise ValueError("--qd_subquery_rerank_weight must be non-negative.")
     answer_prompt_flags = [
@@ -3640,7 +3980,6 @@ def run(args):
             "seed_topk",
             "extra_topk",
             "static_qd_num",
-            "missing_query_num",
             "original_pool_topk",
             "rrf_k",
             "route_c_seed_quota",
@@ -3824,7 +4163,7 @@ def parse_args():
     parser.add_argument("--seed_topk", type=int, default=3)
     parser.add_argument("--extra_topk", type=int, default=5)
     parser.add_argument("--static_qd_num", type=int, default=2)
-    parser.add_argument("--missing_query_num", type=int, default=1)
+    parser.add_argument("--missing_query_num", type=int, default=None)
     parser.add_argument("--original_pool_topk", type=int, default=20)
     parser.add_argument("--rrf_k", type=int, default=60)
     static_qd_group = parser.add_mutually_exclusive_group()
@@ -3896,6 +4235,21 @@ def parse_args():
         type=int,
         default=DEFAULT_RUN_CONFIG["original_seed_count"],
     )
+    parser.add_argument(
+        "--static_bridge_evidence_topk",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["static_bridge_evidence_topk"],
+    )
+    parser.add_argument(
+        "--static_bridge_original_count",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["static_bridge_original_count"],
+    )
+    parser.add_argument(
+        "--static_bridge_qd_count",
+        type=int,
+        default=DEFAULT_RUN_CONFIG["static_bridge_qd_count"],
+    )
     parser.add_argument("--use_centroid_router", action="store_true")
     parser.add_argument("--save_efc_debug", action="store_true")
     parser.add_argument(
@@ -3929,6 +4283,12 @@ def parse_args():
     parser.add_argument("--save_router_debug", action="store_true")
 
     parser.add_argument("--gpu_memory_utilization", type=float, default=None)
+    parser.add_argument(
+        "--generate_gpu_memory_utilization",
+        type=float,
+        default=DEFAULT_RUN_CONFIG["generate_gpu_memory_utilization"],
+        help="vLLM GPU memory utilization for the clean final-generation subprocess in full mode.",
+    )
     parser.add_argument("--strict_short_answer_prompt", action="store_true")
     parser.add_argument("--answer_only_prompt", action="store_true")
     parser.add_argument("--exact_answer_prompt", action="store_true")

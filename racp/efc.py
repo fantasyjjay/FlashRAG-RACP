@@ -305,8 +305,8 @@ def probe_answer_is_bad(question, answer):
         return True
     if probe_answer_is_uncertain(answer):
         return True
-    answer_words = re.findall(r"[a-z]+", lowered)
-    if answer_words and answer_words[-1] in {
+    trailing_word = re.search(r"([a-z]+)[^a-z0-9]*$", lowered)
+    if trailing_word and trailing_word.group(1) in {
         "a",
         "an",
         "and",
@@ -420,29 +420,23 @@ def decide_route(features, force_route="auto"):
         return "direct"
     if features.get("y1_contradictory", False) and features["answer_type_hit_top5"]:
         return "direct"
-    if features["y1_bad"] or features.get("y1_uncertain", False):
-        return "generation_guided" if features["y1_has_new_entity"] else "static_qd"
     if not features["question_is_multihop"]:
         return "direct"
+    # EFC follows the IterRetGen principle: when the probe exposes a bridge
+    # entity, use that generation to drive the next retrieval hop. Static
+    # decomposition is reserved for cases where the probe exposes no entity.
+    if features["y1_has_new_entity"]:
+        return "generation_guided"
+    if features["y1_bad"] or features.get("y1_uncertain", False):
+        return "static_qd"
     if (
         features["q_centroid_sim"] is not None
         and features["q_centroid_sim"] < 0.35
-        and not features["y1_has_new_entity"]
     ):
         return "static_qd"
-    if (
-        features["gap_1_5"] < 0.03
-        and features["y1_has_new_entity"]
-    ):
-        return "generation_guided"
-    if features["gap_1_5"] < 0.03:
-        return "static_qd"
-    if (
-        features["top5_cohesion"] is not None
-        and features["top5_cohesion"] > 0.75
-        and features["y1_has_new_entity"]
-    ):
-        return "generation_guided"
+    # A complete, non-uncertain probe with no newly exposed entity has no
+    # useful bridge for another retrieval hop. Keep its existing evidence
+    # instead of forcing low-value decomposition.
     return "direct"
 
 
@@ -702,6 +696,92 @@ def role_aware_pack(
             covered[role] = max(covered[role], best_doc["role_scores"].get(role, 0.0))
 
     return order_context(selected, route), covered
+
+
+def _min_rank_for_prefix(doc, prefix):
+    ranks = [
+        rank
+        for query_id, rank in doc.get("ranks", {}).items()
+        if query_id.startswith(prefix)
+    ]
+    return min(ranks) if ranks else 10**9
+
+
+def static_bridge_pack(
+    candidate_pool,
+    question,
+    probe_answer,
+    features,
+    final_topk,
+    config,
+):
+    for doc in candidate_pool:
+        doc["role_scores"] = compute_role_scores(doc, question, probe_answer, features)
+
+    selected = []
+    selected_uids = set()
+    title_counts = Counter()
+
+    def add_docs(docs, limit):
+        added = 0
+        for doc in docs:
+            if len(selected) >= final_topk or added >= limit:
+                break
+            uid = doc.get("doc_uid")
+            title_key = doc_title(doc).lower()
+            if uid in selected_uids or title_counts[title_key] >= 1:
+                continue
+            selected.append(doc)
+            selected_uids.add(uid)
+            title_counts[title_key] += 1
+            added += 1
+        return added
+
+    original_limit = min(
+        int(config.get("static_bridge_original_count", 4)),
+        final_topk,
+    )
+    qd_limit = min(
+        int(config.get("static_bridge_qd_count", final_topk - original_limit)),
+        final_topk - original_limit,
+    )
+    original_docs = sorted(
+        [doc for doc in candidate_pool if "original" in doc.get("sources", [])],
+        key=lambda doc: doc.get("ranks", {}).get("original", 10**9),
+    )
+    qd_docs = sorted(
+        [doc for doc in candidate_pool if "qd" in doc.get("sources", [])],
+        key=lambda doc: (
+            _min_rank_for_prefix(doc, "qd_"),
+            -float(doc.get("rrf_score", 0.0)),
+        ),
+    )
+
+    add_docs(original_docs, original_limit)
+    add_docs(qd_docs, qd_limit)
+
+    remaining_docs = sorted(
+        candidate_pool,
+        key=lambda doc: (
+            -float(doc.get("rrf_score", 0.0)),
+            min(doc.get("ranks", {}).values(), default=10**9),
+        ),
+    )
+    add_docs(remaining_docs, final_topk - len(selected))
+
+    if len(selected) < min(final_topk, len(candidate_pool)):
+        for doc in remaining_docs:
+            if len(selected) >= min(final_topk, len(candidate_pool)):
+                break
+            uid = doc.get("doc_uid")
+            if uid in selected_uids:
+                continue
+            selected.append(doc)
+            selected_uids.add(uid)
+
+    return order_context(selected, "static_qd"), score_selected_roles(
+        selected, question, probe_answer, features
+    )
 
 
 def score_selected_roles(selected, question, probe_answer, features):

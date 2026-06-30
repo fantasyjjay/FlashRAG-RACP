@@ -138,6 +138,7 @@ efc_rag_config:
   qd_topk: 5
   enable_generation_guided: True
   gen_topk: 10
+  missing_query_num: 1
   missing_query_mode: llm
   rrf_k: 60
   rrf_weight: 1.0
@@ -147,7 +148,10 @@ efc_rag_config:
   redundancy_weight: 0.01
   title_dedup_soft: True
   max_same_title: 2
-  original_seed_count: 3
+  original_seed_count: 4
+  static_bridge_evidence_topk: 5
+  static_bridge_original_count: 4
+  static_bridge_qd_count: 2
   use_centroid_router: False
   save_efc_debug: False
   probe_max_tokens: 128
