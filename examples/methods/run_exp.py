@@ -8,10 +8,15 @@ import argparse
 
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
+REPO_DIR = EXAMPLE_DIR.parents[1]
 CONFIG_PATH = EXAMPLE_DIR / "my_config.yaml"
 MODEL_DIR = Path.home() / "my_models"
 DATASET_DIR = Path.home() / "my_datasets" / "FlashRAG_datasets"
 INDEX_DIR = DATASET_DIR / "indexes"
+RACP_OUTPUT_DIR = REPO_DIR / "racp" / "output"
+DEFAULT_HOTPOTQA_CACHE = (
+    RACP_OUTPUT_DIR / "cache" / "hotpotqa_dev_bge_large_no_rerank_top20_retrieval_cache.json"
+)
 
 
 def local_model_path(name):
@@ -577,6 +582,82 @@ def ircot(args):
     result = pipeline.run(test_data)
 
 
+def ircot_no_rerank(args):
+    """Run a clean IRCoT baseline with query-level retrieval-cache reuse."""
+    gpu_ids = [gpu_id.strip() for gpu_id in args.gpu_id.split(",") if gpu_id.strip()]
+    if not 1 <= len(gpu_ids) <= 4:
+        raise ValueError("IRCoT requires 1-4 GPU IDs, for example --gpu_id 0,1")
+    if len(gpu_ids) != len(set(gpu_ids)):
+        raise ValueError(f"Duplicate GPU IDs are not allowed: {args.gpu_id}")
+    if args.max_iter < 1:
+        raise ValueError("--max_iter must be at least 1")
+    if args.retrieval_topk < 1:
+        raise ValueError("--retrieval_topk must be at least 1")
+
+    retrieval_cache_path = args.retrieval_cache_path or DEFAULT_HOTPOTQA_CACHE
+    if not retrieval_cache_path.exists():
+        raise FileNotFoundError(f"Retrieval cache not found: {retrieval_cache_path}")
+
+    save_note = args.save_note or "ircot-no-rerank"
+    config_dict = {
+        "save_dir": str(RACP_OUTPUT_DIR),
+        "save_note": save_note,
+        "gpu_id": ",".join(gpu_ids),
+        "dataset_name": args.dataset_name,
+        "split": args.split,
+        "test_sample_num": args.test_sample_num,
+        "random_sample": False,
+        "retrieval_method": "bge-large-en-v1.5",
+        "retrieval_model_path": local_model_path("bge-large-en-v1.5"),
+        "retrieval_pooling_method": "cls",
+        "index_path": str(
+            INDEX_DIR
+            / "wiki18_100w_bge-large-en-v1.5"
+            / "bge-large-en-v1.5_Flat.index"
+        ),
+        "corpus_path": str(DATASET_DIR / "retrieval-corpus" / "wiki18_100w.jsonl"),
+        "retrieval_topk": args.retrieval_topk,
+        "retrieval_batch_size": args.retrieval_batch_size,
+        "use_retrieval_cache": True,
+        "retrieval_cache_path": str(retrieval_cache_path),
+        "save_retrieval_cache": True,
+        "use_reranker": False,
+        "rerank_topk": args.retrieval_topk,
+        "refiner_name": None,
+        "framework": "vllm",
+        "generator_model": "Llama-3.1-8B-Instruct",
+        "generator_model_path": local_model_path("Llama-3.1-8B-Instruct"),
+        "generator_max_input_len": 4096,
+        "gpu_memory_utilization": args.gpu_memory_utilization,
+        "generation_params": {
+            "do_sample": False,
+            "max_tokens": args.max_tokens,
+        },
+        "metric_setting": {
+            "retrieval_recall_topk": args.retrieval_topk * args.max_iter,
+            "tokenizer_name": "gpt-4",
+        },
+    }
+
+    from flashrag.pipeline import IRCOTPipeline
+
+    config = load_config(config_dict)
+    all_split = get_dataset(config)
+    test_data = all_split[args.split]
+    if test_data is None:
+        available = sorted(p.stem for p in Path(config["dataset_path"]).glob("*.jsonl"))
+        raise FileNotFoundError(
+            f"Split '{args.split}' not found for dataset '{args.dataset_name}'. Available splits: {available}"
+        )
+
+    print(
+        f"IRCoT no-reranker: samples={len(test_data)}, GPUs={gpu_ids}, "
+        f"topk={args.retrieval_topk}, max_iter={args.max_iter}, cache={retrieval_cache_path}"
+    )
+    pipeline = IRCOTPipeline(config, max_iter=args.max_iter)
+    pipeline.run(test_data)
+
+
 def trace(args):
     """
     Reference:
@@ -898,6 +979,14 @@ if __name__ == "__main__":
     parser.add_argument("--split", type=str)
     parser.add_argument("--dataset_name", type=str)
     parser.add_argument("--gpu_id", type=str)
+    parser.add_argument("--test_sample_num", type=int, default=None)
+    parser.add_argument("--save_note", type=str, default=None)
+    parser.add_argument("--retrieval_cache_path", type=Path, default=None)
+    parser.add_argument("--retrieval_topk", type=int, default=5)
+    parser.add_argument("--retrieval_batch_size", type=int, default=1024)
+    parser.add_argument("--max_iter", type=int, default=2)
+    parser.add_argument("--max_tokens", type=int, default=32)
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.65)
 
     
     func_dict = {
@@ -919,6 +1008,7 @@ if __name__ == "__main__":
         "flare": flare,
         "iterretgen": iterretgen,
         "ircot": ircot,
+        "ircot-no-rerank": ircot_no_rerank,
         "trace": trace,
         "adaptive": adaptive,
         "rqrag": rqrag,

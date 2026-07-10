@@ -270,13 +270,18 @@ def tee_run_output(log_path, stage):
         sys.stderr = TeeStream(original_stderr, log_file)
         print(f"\n=== RACP {stage} started at {datetime.now().isoformat(timespec='seconds')} ===")
         print(f"Run log: {log_path}")
+        status = "finished"
         try:
             yield
         except BaseException:
+            status = "failed"
             traceback.print_exc()
             raise
         finally:
-            print(f"=== RACP {stage} finished at {datetime.now().isoformat(timespec='seconds')} ===")
+            print(
+                f"=== RACP {stage} {status} at "
+                f"{datetime.now().isoformat(timespec='seconds')} ==="
+            )
             sys.stdout.flush()
             sys.stderr.flush()
             sys.stdout = original_stdout
@@ -3827,10 +3832,25 @@ def build_full_generate_command(args, prompt_cache_path):
 
 def run_full_vllm_generate(config, args, dataset):
     prompt_cache_path = Path(config["save_dir"]) / "prompt_cache.json"
-    save_prompt_cache(dataset, prompt_cache_path, compact_efc=True)
+    rs_mhr_enabled = (config["rs_mhr_config"] or {}).get("enabled", False)
+    efc_enabled = (config["efc_rag_config"] or {}).get("enabled", False)
+    save_prompt_cache(
+        dataset,
+        prompt_cache_path,
+        compact_rs_mhr=rs_mhr_enabled,
+        compact_efc=efc_enabled,
+    )
 
     command = build_full_generate_command(args, prompt_cache_path)
-    print("EFC-RAG final generation: launching a clean vLLM subprocess.")
+    if efc_enabled:
+        method_name = "EFC-RAG"
+    elif rs_mhr_enabled:
+        method_name = "RS-MHR"
+    elif config["decomposition_config"]["enabled"]:
+        method_name = "Query decomposition"
+    else:
+        method_name = "RACP"
+    print(f"{method_name} final generation: launching a clean vLLM subprocess.")
     print(
         f"  gpu_memory_utilization: {args.generate_gpu_memory_utilization}"
     )
@@ -3876,6 +3896,8 @@ def run_full(config, args):
         if planner_generator is not None:
             release_generator(planner_generator)
             del planner_generator
+        if config["framework"] == "vllm":
+            return run_full_vllm_generate(config, args, dataset)
         generator = get_generator(config)
     elif config["decomposition_config"]["enabled"]:
         dataset = load_split(config, args.split)
@@ -3888,6 +3910,8 @@ def run_full(config, args):
         if planner_generator is not None:
             release_generator(planner_generator)
             del planner_generator
+        if config["framework"] == "vllm":
+            return run_full_vllm_generate(config, args, dataset)
         generator = get_generator(config)
     else:
         # Keep the original startup order for the existing RACP flow.

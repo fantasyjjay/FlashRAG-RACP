@@ -960,6 +960,7 @@ class IRCOTPipeline(BasicPipeline):
 
         # Initial retrieval for all items in the batch
         questions = [item.question for item in items]
+        print(f"IRCoT: initial retrieval for {len(questions)} questions")
         retrieval_results, scoress = self.retriever.batch_search(questions, return_score=True)
         for retrieval_result, scores in zip(retrieval_results,scoress):   
             doc2score = {doc_item['id']: score for doc_item, score in zip(retrieval_result, scores)}
@@ -971,6 +972,9 @@ class IRCOTPipeline(BasicPipeline):
         # Start the iterative process
         active_item_ids = list(range(len(items)))  # Track items that need more iterations
         while iter_num < self.max_iter:
+            if not active_item_ids:
+                break
+
             # Generate prompts and new thoughts for the active items
             input_prompts = [
                 self.prompt_template.get_string(
@@ -978,11 +982,14 @@ class IRCOTPipeline(BasicPipeline):
                     retrieval_result=batch_retrieval_results[item_id],
                     previous_gen=' '.join(batch_thoughts[item_id])
                 )
-                for item_id in active_item_ids
+                for item_id in tqdm(
+                    active_item_ids,
+                    desc=f"IRCoT iter {iter_num + 1}: build prompts",
+                )
             ]
             
-
             # Batch generation for active items
+            print(f"IRCoT iter {iter_num + 1}: generating {len(input_prompts)} thoughts")
             new_thoughts_batch = self.generator.generate(input_prompts, stop=['.', '\n'])
             
             # Update thoughts and determine next active items
@@ -1006,9 +1013,14 @@ class IRCOTPipeline(BasicPipeline):
             # Update active item IDs for the next iteration
             active_item_ids = new_active_item_ids
 
-            # Perform batch retrieval for new thoughts of active items
-            if active_item_ids:
+            # Retrieval after the final thought cannot affect answer generation.
+            has_next_generation_step = iter_num + 1 < self.max_iter
+            if active_item_ids and has_next_generation_step:
                 new_thoughts_for_retrieval = [batch_thoughts[item_id][-1] for item_id in active_item_ids]
+                print(
+                    f"IRCoT iter {iter_num + 1}: retrieving for "
+                    f"{len(new_thoughts_for_retrieval)} new thought queries"
+                )
                 new_retrieval_results, new_scoress = self.retriever.batch_search(new_thoughts_for_retrieval, return_score=True)
 
                 for i, item_id in enumerate(active_item_ids):
@@ -1024,11 +1036,47 @@ class IRCOTPipeline(BasicPipeline):
                             doc2score_batch[item_id][doc_id] = score
 
                     # Sort and update retrieval results
-                    sorted_doc_score = sorted(doc2score_batch[item_id].items(), key=lambda x: x[1], reverse=False)
+                    # Dense retriever and reranker scores are higher-is-better.
+                    sorted_doc_score = sorted(doc2score_batch[item_id].items(), key=lambda x: x[1], reverse=True)
                     sorted_doc_id = [t[0] for t in sorted_doc_score]
                     batch_retrieval_results[item_id] = [id2doc_batch[item_id][id] for id in sorted_doc_id]
 
             iter_num += 1
+
+        # The last retrieval step often supplies the missing evidence without
+        # leaving another iteration in which the model can emit the answer.
+        if active_item_ids:
+            print(f"IRCoT: finalizing {len(active_item_ids)} unanswered items")
+            final_prompts = []
+            for item_id in tqdm(active_item_ids, desc="IRCoT: build final prompts"):
+                previous_gen = " ".join(batch_thoughts[item_id])
+                final_instruction = (
+                    " Now answer the original question using the evidence above. "
+                    'Output only the shortest answer after this exact prefix: "So the answer is:" '
+                    "So the answer is:"
+                )
+                final_prompts.append(
+                    self.prompt_template.get_string(
+                        question=items[item_id].question,
+                        retrieval_result=batch_retrieval_results[item_id],
+                        previous_gen=previous_gen + final_instruction,
+                    )
+                )
+
+            final_answers = self.generator.generate(final_prompts, stop=["  ", "\n"])
+            for idx, item_id in enumerate(active_item_ids):
+                final_answer = final_answers[idx].strip()
+                if "So the answer is:" in final_answer:
+                    final_answer = final_answer.rsplit("So the answer is:", 1)[1].strip()
+                final_thought = f"So the answer is: {final_answer}"
+                batch_thoughts[item_id].append(final_thought)
+                items[item_id].update_output(
+                    "intermediate_output_final",
+                    {
+                        "input_prompt": final_prompts[idx],
+                        "new_thought": final_thought,
+                    },
+                )
 
         # Final update for each item in the batch
         for item_id, item in enumerate(items):

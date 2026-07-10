@@ -23,7 +23,8 @@ def ircot_pred_parse(dataset):
     for item in dataset:
         pred = item.pred
         if FINAL_ANSWER_PREFIX in pred:
-            answer = pred.split(FINAL_ANSWER_PREFIX)[1].strip()
+            answer = pred.rsplit(FINAL_ANSWER_PREFIX, 1)[1].strip()
+            answer = re.split(r"\n|\s{2,}", answer, maxsplit=1)[0].strip()
         else:
             answer = pred
         item.update_output('raw_pred', pred)
