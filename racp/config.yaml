@@ -99,7 +99,7 @@ use_fid: False # whether to use FID, only valid in encoder-decoder model
 
 # -------------------------------------------------Refiner Settings------------------------------------------------#
 # If set, the refiner will be used to refine the retrieval documents.
-refiner_name: "selective-context"
+refiner_name: null
 refiner_model_path: "/home/guanjunjie/my_models/gpt2"
 
 # Used for extractive method (e.g embedding models)

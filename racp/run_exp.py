@@ -313,8 +313,14 @@ def refiner_generate(args):
 
 def naive(args):
     save_note = "naive"
-    config_dict = {"save_note": save_note, "gpu_id": args.gpu_id, "dataset_name": args.dataset_name, "split": args.split,
-                   "retrieval_topk": 5}
+    config_dict = {
+        "save_note": save_note,
+        "gpu_id": args.gpu_id,
+        "dataset_name": args.dataset_name,
+        "split": args.split,
+        "retrieval_topk": 5,
+        "refiner_name": None,
+    }
 
     from flashrag.pipeline import SequentialPipeline
 
@@ -340,6 +346,7 @@ def zero_shot(args):
         "dataset_name": args.dataset_name,
         "split": args.split,
         "metrics": ["em", "f1", "acc", "precision", "recall"],
+        "refiner_name": None,
     }
 
     # preparation
