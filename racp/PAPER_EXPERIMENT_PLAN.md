@@ -1,6 +1,6 @@
 # RACP/EFC-RAG 论文实验计划与结果台账
 
-最后更新：2026-07-10  
+最后更新：2026-07-12
 当前代码基线：`e6b4456`（2Wiki Naive RAG 正式运行基线）
 
 ## 0. 下一轮对话快速交接
@@ -27,8 +27,13 @@ reranker 的条件下，自适应证据反馈路由比 Naive RAG、固定 Full-Q
 - Full-QD：EM 33.67、F1 44.59。固定拆分不适合作为主干，QD 只保留为辅助模块。
 - EFC 在 HotpotQA 平均检索 1.9332 次、平均 LLM 调用 2.8718 次；80.89% 样本进入
   `generation_guided`，12.90% 进入 `direct`，6.21% 进入 `static_qd`。
-- 2Wiki Naive RAG 已完成统一口径全量：EM 16.56、F1 25.60、Retrieval Recall@10
-  46.20；下一项为原生 IterRetGen。
+- 2Wiki Naive RAG：EM 16.56、F1 25.60、Retrieval Recall@10 46.20；原生
+  IterRetGen：EM 16.90、F1 26.59、Retrieval Recall@10 42.48；EFC-RAG：EM 20.35、
+  F1 29.37、Retrieval Recall@10 58.17。
+- 2Wiki EFC 相比 IterRetGen 的 EM/F1/检索召回分别提升 3.45/2.78/15.70 个百分点，
+  相比 Naive 的 EM/F1 分别提升 3.79/3.77 个百分点。
+- EFC 已在 HotpotQA 和 2Wiki 两个多跳数据集上同时超过 IterRetGen 的 EM/F1，并持续
+  提高 Retrieval Recall@10；已满足“至少两个多跳数据集超过 IterRetGen”的关键标准。
 - 下一阶段不是继续调 HotpotQA QD，而是优先验证 2Wiki 和 MuSiQue 的跨数据集收益。
 
 ### 0.3 下一步正式任务
@@ -478,11 +483,11 @@ rg -n 'Traceback|RuntimeError|CUDA out of memory| failed at ' racp/output/<FINAL
 |---|---|---|---|---|
 | No-RAG | `TODO` | `TODO` | `TODO` | `TODO` |
 | Naive RAG | `RERUN` | `FINAL` | `TODO` | `RERUN` |
-| IterRetGen | `FINAL` | `TODO` | `TODO` | `TODO` |
+| IterRetGen | `FINAL` | `FINAL` | `TODO` | `TODO` |
 | Full-QD | `FINAL` | `TODO` | `TODO` | `N/A` |
 | IRCoT | `FINAL` | `TODO` | `TODO` | `N/A` |
 | Adaptive-RAG | `TODO` | `TODO` | `TODO` | `TODO` |
-| EFC-RAG | `FINAL` | `TODO` | `TODO` | `TODO` |
+| EFC-RAG | `FINAL` | `FINAL` | `TODO` | `TODO` |
 
 NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳任务的额外成本时加入补充表。
 
@@ -499,11 +504,11 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | `HP-NR-07` | HotpotQA | EFC-RAG | `FINAL` | 完整方法，final context K=10 |
 | `2W-NR-01` | 2Wiki | No-RAG | `TODO` | 闭卷下界 |
 | `2W-NR-02` | 2Wiki | Naive RAG | `FINAL` | 统一 no-refiner、no-reranker、top10 全量结果 |
-| `2W-NR-03` | 2Wiki | IterRetGen | `TODO` | 主干基线 |
+| `2W-NR-03` | 2Wiki | IterRetGen | `FINAL` | 原生三轮主干基线，每轮 top5 |
 | `2W-NR-04` | 2Wiki | Full-QD | `TODO` | 固定拆分基线 |
 | `2W-NR-05` | 2Wiki | IRCoT | `TODO` | 多轮推理检索基线 |
 | `2W-NR-06` | 2Wiki | Adaptive-RAG | `TODO` | router 基线 |
-| `2W-NR-07` | 2Wiki | EFC-RAG | `TODO` | 完整方法 |
+| `2W-NR-07` | 2Wiki | EFC-RAG | `FINAL` | 完整方法，final context K=10 |
 | `MU-NR-01` | MuSiQue | No-RAG | `TODO` | 闭卷下界 |
 | `MU-NR-02` | MuSiQue | Naive RAG | `TODO` | 单次检索基线 |
 | `MU-NR-03` | MuSiQue | IterRetGen | `TODO` | 主干基线 |
@@ -519,7 +524,8 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 
 ## 5. 已锁定的论文结果
 
-所有数值按百分数记录。当前 HotpotQA 四项和 2Wiki Naive RAG 通过正式全量与配置审计。
+所有数值按百分数记录。当前 HotpotQA 四项和 2Wiki 的 Naive RAG、IterRetGen、EFC-RAG
+通过正式全量与配置审计。
 
 ### 5.1 HotpotQA 主结果
 
@@ -558,18 +564,47 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | ID | 方法 | EM | F1 | Acc | Precision | Recall | Retrieval Recall |
 |---|---|---:|---:|---:|---:|---:|---:|
 | `2W-NR-02` | Naive RAG | 16.56 | 25.60 | 25.37 | 25.32 | 30.59 | 46.20 (@10) |
+| `2W-NR-03` | IterRetGen | 16.90 | 26.59 | **30.16** | 25.58 | **34.69** | 42.48 (@10) |
+| `2W-NR-07` | EFC-RAG | **20.35** | **29.37** | 28.92 | **29.04** | 33.98 | **58.17 (@10)** |
 
 最终结果目录：
 
 | ID | 输出目录 | Git commit |
 |---|---|---|
 | `2W-NR-02` | [`output/2wikimultihopqa_2026_07_10_15_04_2wiki-naive-no-rerank-top10-full`](output/2wikimultihopqa_2026_07_10_15_04_2wiki-naive-no-rerank-top10-full) | `e6b4456` |
+| `2W-NR-03` | [`output/2wikimultihopqa_2026_07_10_15_52_2wiki-iterretgen-no-rerank-full`](output/2wikimultihopqa_2026_07_10_15_52_2wiki-iterretgen-no-rerank-full) | `3e62049` |
+| `2W-NR-07` | [`output/2wikimultihopqa_2026_07_12_11_11_2wiki-efc-no-rerank-top10-full`](output/2wikimultihopqa_2026_07_12_11_11_2wiki-efc-no-rerank-top10-full) | `3e62049` |
 
 该运行使用完整 dev 12,576 条样本；每条最终使用 10 篇文档，`refiner_name: null`、
 `use_reranker: false`、`do_sample: false`。`racp/run_exp.py` 未生成 `run.log`，但
 `config.yaml`、`metric_score.txt`、`intermediate_data.json` 和完整 retrieval cache 均已审计。
 
-### 5.4 其余尚无可写入论文的最终结果
+IterRetGen 同样使用完整 dev 12,576 条样本，固定运行三轮、每轮检索 top5；三轮输出和
+最终预测均覆盖全部样本。配置中的指标键为 `retrieval_recall_top10`，但当前
+`IterativePipeline` 写入最终 `retrieval_result` 的是第三轮 5 篇文档，而不是三轮并集；
+论文报告时必须同时披露“三轮 × top5”和该评测语义，不能把它解释为最终上下文含 10 篇。
+
+### 5.4 2Wiki EFC-RAG 效率与路由
+
+| 指标 | 最终值 |
+|---|---:|
+| 平均 LLM 调用 | 2.9051 |
+| 平均检索调用 | 2.0161 |
+| 平均候选池文档数 | 26.9002 |
+| 最终文档数 | 10.0000 |
+| direct | 1,207 / 9.60% |
+| static-QD | 1,410 / 11.21% |
+| generation-guided | 9,959 / 79.19% |
+| planner failure | 0.68% |
+| planner repair | 0.57% |
+| support title recall@10 | 48.90% |
+| both support title hit | 28.96% |
+
+分路由答案表现：`direct` EM/F1 34.88/41.89，`static_qd` 15.89/23.21，
+`generation_guided` 19.22/28.73。完整运行覆盖 12,576 条样本，final top10，日志无
+Traceback、OOM 或失败结束标记。
+
+### 5.5 其余尚无可写入论文的最终结果
 
 | 数据集 | 当前结论 |
 |---|---|
@@ -597,8 +632,8 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 
 ### 阶段 A：跨数据集可行性
 
-1. 2Wiki：`2W-NR-02` 已 `FINAL`；下一步依次运行 `2W-NR-03`、`2W-NR-07`
-2. `MU-NR-02`、`MU-NR-03`、`MU-NR-07`
+1. 2Wiki：`2W-NR-02`、`2W-NR-03`、`2W-NR-07` 已 `FINAL`
+2. 下一步依次运行 `MU-NR-02`、`MU-NR-03`、`MU-NR-07`
 3. 判断 EFC-RAG 是否至少在两个多跳数据集上超过 IterRetGen。
 
 ### 阶段 B：补齐多跳主表
@@ -640,6 +675,8 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 
 | 日期 | 更新内容 |
 |---|---|
+| 2026-07-12 | 审计并登记 2Wiki EFC-RAG 全量结果 `2W-NR-07`；EFC 在 EM/F1 和 Retrieval Recall 上明显超过 IterRetGen，下一阶段推进到 MuSiQue |
+| 2026-07-12 | 审计并登记 2Wiki IterRetGen 全量结果 `2W-NR-03`；记录三轮 top5 与最终检索列表的评测语义，下一项推进到 EFC-RAG |
 | 2026-07-10 | 修复 baseline 意外继承 `selective-context` refiner，锁定正式代码基线 `e6b4456` |
 | 2026-07-10 | 审计并登记 2Wiki Naive RAG 全量结果 `2W-NR-02`，下一项推进到 IterRetGen |
 | 2026-07-10 | 建立正式论文实验计划；纳入 HotpotQA 的 IterRetGen、Full-QD、IRCoT 和 EFC-RAG 四项全量结果；排除全部 smoke 和配置不统一的历史结果 |
@@ -661,6 +698,9 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 6. HotpotQA 的 EFC F1 略低于 IRCoT。论文应主张“相比 IterRetGen/Full-QD 的提升和更好
    的证据召回/质量成本平衡”，不能宣称所有答案指标最优。
 7. 2Wiki 历史 Native 结果和 NQ 历史结果配置不统一，只能作为调试参考。
+8. 当前 `IterativePipeline` 固定三轮各取 top5，但最终 `retrieval_result` 只保留第三轮
+   top5；metric key 仍为 `retrieval_recall_top10`。论文中必须披露这一实现语义，后续若
+   改为三轮候选并集评测属于口径变更，必须统一重跑，不能与现有 FINAL 混排。
 
 ### 10.2 未经明确实验设计不得修改
 
