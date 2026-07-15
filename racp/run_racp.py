@@ -58,6 +58,7 @@ from racp.efc import (
     normalize_doc as efc_normalize_doc,
     role_aware_pack,
     role_coverage_ratio,
+    select_rrf_only,
     score_selected_roles,
     select_ranked_title_diverse,
     static_bridge_pack,
@@ -109,6 +110,7 @@ DEFAULT_RUN_CONFIG = {
     "redundancy_weight": 0.01,
     "max_same_title": 2,
     "original_seed_count": 4,
+    "rrf_only_selection": False,
     "static_bridge_evidence_topk": 5,
     "static_bridge_original_count": 4,
     "static_bridge_qd_count": 2,
@@ -443,6 +445,7 @@ def build_config_dict(args):
             "title_dedup_soft": args.title_dedup_soft,
             "max_same_title": args.max_same_title,
             "original_seed_count": args.original_seed_count,
+            "rrf_only_selection": args.rrf_only_selection,
             "static_bridge_evidence_topk": args.static_bridge_evidence_topk,
             "static_bridge_original_count": args.static_bridge_original_count,
             "static_bridge_qd_count": args.static_bridge_qd_count,
@@ -2523,7 +2526,17 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
             cursor += 1
         candidate_pool = efc_merge_docs([record["r0_docs"]] + extra_groups)
         add_rrf_scores(candidate_pool, int(efc_config.get("rrf_k", 60)))
-        if record["route"] == "direct":
+        if efc_config.get("rrf_only_selection", False):
+            selected_docs = select_rrf_only(
+                candidate_pool, final_topk, record["route"]
+            )
+            covered_roles = score_selected_roles(
+                selected_docs,
+                record["question"],
+                record["probe_answer"],
+                record["features"],
+            )
+        elif record["route"] == "direct":
             selected_docs = select_ranked_title_diverse(
                 record["r0_docs"], final_topk, max_same_title=1
             )
@@ -2650,11 +2663,13 @@ def retrieve_with_efc(config, dataset, retriever, probe_generator):
         )
         outputs["adaptive_k"].append(len(selected_docs))
         outputs["adaptive_gap_index"].append(None)
-        outputs["selection_method"].append(
-            "efc_ranked_title_diverse"
-            if record["route"] == "direct"
-            else "efc_role_aware"
-        )
+        if efc_config.get("rrf_only_selection", False):
+            selection_method = "efc_rrf_only"
+        elif record["route"] == "direct":
+            selection_method = "efc_ranked_title_diverse"
+        else:
+            selection_method = "efc_role_aware"
+        outputs["selection_method"].append(selection_method)
         outputs["query_decomposition_enabled"].append(False)
         outputs["efc_cost"].append(
             {
@@ -4258,6 +4273,14 @@ def parse_args():
         "--original_seed_count",
         type=int,
         default=DEFAULT_RUN_CONFIG["original_seed_count"],
+    )
+    parser.add_argument(
+        "--rrf_only_selection",
+        action="store_true",
+        help=(
+            "EFC ablation: select final documents only by fused RRF score for "
+            "all routes, bypassing role/diversity/seed/static-quota selection."
+        ),
     )
     parser.add_argument(
         "--static_bridge_evidence_topk",

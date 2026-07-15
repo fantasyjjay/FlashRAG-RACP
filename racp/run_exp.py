@@ -53,6 +53,8 @@ def set_runtime_config_overrides(args):
         RUNTIME_CONFIG_OVERRIDES["use_retrieval_cache"] = True
     if args.retrieval_cache_path is not None:
         RUNTIME_CONFIG_OVERRIDES["retrieval_cache_path"] = str(args.retrieval_cache_path)
+    if args.test_sample_num is not None:
+        RUNTIME_CONFIG_OVERRIDES["test_sample_num"] = args.test_sample_num
 
 
 def normalize_args(args):
@@ -554,7 +556,7 @@ def sure(args):
     Reference:
         Jaehyung Kim et al. "SuRe: Summarizing Retrievals using Answer Candidates for Open-domain QA of LLMs"
         in ICLR 2024
-        Official repo: https://github.com/bbuing9/ICLR24_SuRe
+        Official repo: https://github.com/jzbjyb/FLARE
     """
     config_dict = {"save_note": "SuRe", "gpu_id": args.gpu_id, "dataset_name": args.dataset_name, "split": args.split}
     config = load_config(config_dict)
@@ -693,14 +695,29 @@ def flare(args):
         Official repo: https://github.com/bbuing9/ICLR24_SuRe
 
     """
-    config_dict = {"save_note": "flare", "gpu_id": args.gpu_id, "dataset_name": args.dataset_name, "split": args.split}
+    retrieval_topk = args.retrieval_topk or 5
+    config_dict = {
+        "save_note": args.save_note or "flare",
+        "gpu_id": args.gpu_id,
+        "dataset_name": args.dataset_name,
+        "split": args.split,
+        "refiner_name": None,
+        "retrieval_topk": retrieval_topk,
+        "metric_setting": {"retrieval_recall_topk": retrieval_topk},
+    }
     config = load_config(config_dict)
     all_split = get_dataset(config)
     test_data = all_split[args.split]
 
     from flashrag.pipeline import FLAREPipeline
 
-    pipeline = FLAREPipeline(config)
+    pipeline = FLAREPipeline(
+        config,
+        threshold=args.flare_threshold,
+        look_ahead_steps=args.flare_look_ahead_steps,
+        max_generation_length=args.flare_max_generation_length,
+        max_iter_num=args.flare_max_iter,
+    )
     result = pipeline.run(test_data)
 
 
@@ -759,7 +776,7 @@ def trace(args):
         Jinyuan Fang et al. "TRACE the Evidence: Constructing Knowledge-Grounded Reasoning Chains for Retrieval-Augmented Generation"
     """
 
-    save_note = "trace"
+    save_note = args.save_note or "trace"
     trace_config = {
         "num_examplars": 3,
         "max_chain_length": 4,
@@ -771,14 +788,17 @@ def trace(args):
         "n_context": 5,  # number of used chains in generation
         "context_type": "triples",  # triples/triple-doc
     }
+    retrieval_topk = args.retrieval_topk or 5
     config_dict = {
         "save_note": save_note,
         "gpu_id": args.gpu_id,
         "dataset_name": args.dataset_name,
         "refiner_name": "kg-trace",
         "trace_config": trace_config,
-        "framework": "hf",  # Trance only supports using Huggingface Transformers since it needs logits of outputs
+        "framework": "hf",  # TRACE requires Hugging Face Transformers because it needs output logits
         "split": args.split,
+        "retrieval_topk": retrieval_topk,
+        "metric_setting": {"retrieval_recall_topk": retrieval_topk},
     }
 
     # preparation
@@ -837,15 +857,27 @@ def spring(args):
 
 def adaptive(args):
     judger_name = "adaptive-rag"
-    model_path = "illuminoplanet/adaptive-rag-classifier"
+    if args.adaptive_model_path is None:
+        raise ValueError(
+            "Adaptive-RAG requires --adaptive_model_path pointing to an audited local classifier checkpoint. "
+            "The non-official Hugging Face checkpoint referenced by the FlashRAG reproduction guide is no "
+            "longer available."
+        )
+    model_path = str(args.adaptive_model_path)
+    if not Path(model_path).exists():
+        raise FileNotFoundError(f"Adaptive-RAG classifier checkpoint does not exist: {model_path}")
 
+    retrieval_topk = args.retrieval_topk or 5
     config_dict = {
         "judger_name": judger_name,
-        "judger_config": {"model_path": model_path},
-        "save_note": "adaptive-rag",
+        "judger_config": {"model_path": model_path, "batch_size": args.adaptive_batch_size},
+        "save_note": args.save_note or "adaptive-rag",
         "gpu_id": args.gpu_id,
         "dataset_name": args.dataset_name,
         "split": args.split,
+        "refiner_name": None,
+        "retrieval_topk": retrieval_topk,
+        "metric_setting": {"retrieval_recall_topk": retrieval_topk},
     }
     # preparation
     config = load_config(config_dict)
@@ -854,7 +886,7 @@ def adaptive(args):
 
     from flashrag.pipeline import AdaptivePipeline
 
-    pipeline = AdaptivePipeline(config)
+    pipeline = AdaptivePipeline(config, multi_hop_max_iter=args.adaptive_max_iter)
     result = pipeline.run(test_data)
 
 def rqrag(args):
@@ -1078,6 +1110,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_note", type=str)
     parser.add_argument("--retrieval_topk", type=int)
     parser.add_argument("--retrieval_batch_size", type=int)
+    parser.add_argument("--test_sample_num", type=int)
     parser.add_argument("--rerank_topk", type=int)
     parser.add_argument("--gpu_memory_utilization", type=float)
     parser.add_argument("--use_reranker", action="store_true")
@@ -1086,6 +1119,13 @@ if __name__ == "__main__":
     parser.add_argument("--use_retrieval_cache", action="store_true")
     parser.add_argument("--retrieval_cache_path", type=Path)
     parser.add_argument("--source_prompt_cache", type=Path)
+    parser.add_argument("--flare_threshold", type=float, default=0.2)
+    parser.add_argument("--flare_look_ahead_steps", type=int, default=64)
+    parser.add_argument("--flare_max_generation_length", type=int, default=256)
+    parser.add_argument("--flare_max_iter", type=int, default=5)
+    parser.add_argument("--adaptive_model_path", type=Path)
+    parser.add_argument("--adaptive_batch_size", type=int, default=16)
+    parser.add_argument("--adaptive_max_iter", type=int, default=2)
 
     
     func_dict = {

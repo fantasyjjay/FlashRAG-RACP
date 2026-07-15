@@ -817,6 +817,24 @@ def select_ranked_title_diverse(docs, final_topk, max_same_title=1):
     return selected
 
 
+def select_rrf_only(candidate_pool, final_topk, route):
+    """Select the final context using only fused RRF scores.
+
+    This is an isolated ablation selector.  It intentionally ignores role,
+    title/source diversity, redundancy, original-document reservation, and
+    static-QD quotas while preserving the route-specific presentation order.
+    """
+    ranked_docs = sorted(
+        candidate_pool,
+        key=lambda doc: (
+            -float(doc.get("rrf_score", 0.0)),
+            min(doc.get("ranks", {}).values(), default=10**9),
+            str(doc.get("doc_uid", "")),
+        ),
+    )
+    return order_context(ranked_docs[:final_topk], route)
+
+
 def order_context(selected, route):
     def source_rank(doc, prefix):
         ranks = [

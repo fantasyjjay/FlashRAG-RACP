@@ -288,7 +288,8 @@ class AdaptivePipeline(BasicPipeline):
         single_hop_prompt_template=None,
         multi_hop_prompt_template=None,
         retriever = None,
-        generator = None
+        generator = None,
+        multi_hop_max_iter=5,
     ):
         super().__init__(config)
         # load adaptive classifier as judger
@@ -326,7 +327,11 @@ class AdaptivePipeline(BasicPipeline):
         )
 
         self.multi_hop_pipeline = IRCOTPipeline(
-            config, prompt_template=multi_hop_prompt_template, retriever=retriever, generator=generator, max_iter=5
+            config,
+            prompt_template=multi_hop_prompt_template,
+            retriever=retriever,
+            generator=generator,
+            max_iter=multi_hop_max_iter,
         )
 
     def run(self, dataset, do_eval=True, pred_process_fun=None):

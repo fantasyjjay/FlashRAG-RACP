@@ -269,10 +269,15 @@ class VLLMGenerator(BaseGenerator):
         if return_scores:
             scores = []
             for output in outputs:
+                output_scores = []
                 for single_output in output.outputs:
                     if single_output.logprobs:
-                        token_probs = [np.exp(list(score_dict.values())[0].logprob) 
-                                      for score_dict in single_output.logprobs]
+                        token_probs = []
+                        for token_id, score_dict in zip(single_output.token_ids, single_output.logprobs):
+                            selected_token = score_dict.get(token_id)
+                            if selected_token is None:
+                                selected_token = next(iter(score_dict.values()))
+                            token_probs.append(np.exp(selected_token.logprob))
                         output_scores.append(token_probs)
                     else:
                         output_scores.append([])

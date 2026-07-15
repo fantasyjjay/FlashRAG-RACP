@@ -149,6 +149,7 @@ efc_rag_config:
   title_dedup_soft: True
   max_same_title: 2
   original_seed_count: 4
+  rrf_only_selection: False
   static_bridge_evidence_topk: 5
   static_bridge_original_count: 4
   static_bridge_qd_count: 2

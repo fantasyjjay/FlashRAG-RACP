@@ -753,6 +753,10 @@ class FLAREPipeline(BasicPipeline):
         gen_length = 0
         iter_round = 0
         final_gen_result = ""
+        # FLARE may remain confident for every round and never retrieve.  Keep a
+        # well-defined empty final retrieval result so retrieval metrics can
+        # evaluate those samples instead of failing on a missing field.
+        item.update_output("retrieval_result", [])
         while gen_length < self.max_generation_length and iter_round < self.max_iter_num:
             input_prompt = self.prompt_template.get_string(question=question, previous_gen=final_gen_result)
 
@@ -771,7 +775,12 @@ class FLAREPipeline(BasicPipeline):
 
             if not judge_result:
                 # do retrieval-augmented generation
-                retrieval_result = self.retriever.search(query)
+                # The cache manager keeps batch-shaped results for cache misses.
+                # Use the batch API explicitly and unwrap one query so dynamic
+                # FLARE queries have the same List[doc] shape as cache hits.
+                retrieval_result = self.retriever.batch_search([query])[0]
+                item.update_output(f"retrieval_query_iter{iter_round}", query)
+                item.update_output(f"retrieval_result_iter{iter_round}", retrieval_result)
                 item.update_output("retrieval_result", retrieval_result)
                 input_prompt = self.prompt_template.get_string(
                     question=question, retrieval_result=retrieval_result, previous_gen=final_gen_result

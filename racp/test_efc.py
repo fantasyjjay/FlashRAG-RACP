@@ -20,6 +20,7 @@ from racp.efc import (
     normalize_doc,
     probe_answer_is_bad,
     role_aware_pack,
+    select_rrf_only,
     select_ranked_title_diverse,
     static_bridge_pack,
 )
@@ -536,3 +537,25 @@ def test_static_bridge_pack_uses_original_and_qd_quotas():
 
     assert sum("original" in doc["sources"] for doc in selected) == 4
     assert sum("qd" in doc["sources"] for doc in selected) == 2
+
+
+def test_rrf_only_selector_ignores_title_and_source_quotas():
+    duplicate_a = make_doc("a", "Same title", "Original A.", 1)
+    duplicate_b = make_doc("b", "Same title", "Original B.", 2)
+    expanded = make_doc(
+        "c",
+        "Expansion",
+        "Expansion evidence.",
+        100,
+        source="generation_guided",
+        query_id="gen_0",
+    )
+    pool = add_rrf_scores([duplicate_a, duplicate_b, expanded])
+
+    selected = select_rrf_only(pool, final_topk=2, route="generation_guided")
+
+    expected = sorted(pool, key=lambda doc: -doc["rrf_score"])[:2]
+    assert {doc["doc_uid"] for doc in selected} == {
+        doc["doc_uid"] for doc in expected
+    }
+    assert [doc["title"] for doc in selected].count("Same title") == 2

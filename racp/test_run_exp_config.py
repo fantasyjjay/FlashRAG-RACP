@@ -89,3 +89,104 @@ def test_sequential_pipeline_skips_refiner_when_disabled():
 
     assert pipeline.refiner is None
     get_refiner.assert_not_called()
+
+
+def test_flare_records_empty_retrieval_result_when_no_retrieval_is_triggered():
+    from flashrag.pipeline.active_pipeline import FLAREPipeline
+
+    class FakeTokenizer:
+        def encode(self, text, **kwargs):
+            return [1]
+
+        def decode(self, token_ids):
+            return "Answer."
+
+    class FakeGenerator:
+        tokenizer = FakeTokenizer()
+
+        def generate(self, *args, **kwargs):
+            return ["Answer."], [[0.9]]
+
+    class FakePromptTemplate:
+        def get_string(self, **kwargs):
+            return "prompt"
+
+    class FakeItem:
+        question = "question"
+
+        def __init__(self):
+            self.output = {}
+
+        def update_output(self, key, value):
+            self.output[key] = value
+
+    pipeline = FLAREPipeline.__new__(FLAREPipeline)
+    pipeline.generator = FakeGenerator()
+    pipeline.retriever = object()
+    pipeline.prompt_template = FakePromptTemplate()
+    pipeline.threshold = 0.2
+    pipeline.max_generation_length = 1
+    pipeline.max_iter_num = 1
+    pipeline.look_ahead_steps = 64
+    pipeline.stop_sym = []
+
+    item = FakeItem()
+    pipeline.run_item(item)
+
+    assert item.output["retrieval_result"] == []
+    assert item.output["pred"] == "Answer."
+
+
+def test_flare_uses_batch_retrieval_for_a_dynamic_query():
+    from flashrag.pipeline.active_pipeline import FLAREPipeline
+
+    class FakeTokenizer:
+        def encode(self, text, **kwargs):
+            return [1, 2]
+
+        def decode(self, token_ids):
+            return "known" if token_ids else ""
+
+    class FakeGenerator:
+        tokenizer = FakeTokenizer()
+
+        def generate(self, *args, **kwargs):
+            return ["Known uncertain."], [[0.9, 0.1]]
+
+    class FakeRetriever:
+        def __init__(self):
+            self.queries = []
+
+        def batch_search(self, queries):
+            self.queries.append(queries)
+            return [[{"id": "doc-1", "contents": "title\ntext"}]]
+
+    class FakePromptTemplate:
+        def get_string(self, **kwargs):
+            return "prompt"
+
+    class FakeItem:
+        question = "question"
+
+        def __init__(self):
+            self.output = {}
+
+        def update_output(self, key, value):
+            self.output[key] = value
+
+    pipeline = FLAREPipeline.__new__(FLAREPipeline)
+    pipeline.generator = FakeGenerator()
+    pipeline.retriever = FakeRetriever()
+    pipeline.prompt_template = FakePromptTemplate()
+    pipeline.threshold = 0.2
+    pipeline.max_generation_length = 1
+    pipeline.max_iter_num = 1
+    pipeline.look_ahead_steps = 64
+    pipeline.stop_sym = []
+
+    item = FakeItem()
+    pipeline.run_item(item)
+
+    assert pipeline.retriever.queries == [["known"]]
+    assert item.output["retrieval_query_iter0"] == "known"
+    assert item.output["retrieval_result"] == [{"id": "doc-1", "contents": "title\ntext"}]
