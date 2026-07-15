@@ -21,6 +21,7 @@ from racp.efc import (
     probe_answer_is_bad,
     role_aware_pack,
     select_rrf_only,
+    select_rrf_title_diverse,
     select_ranked_title_diverse,
     static_bridge_pack,
 )
@@ -559,3 +560,16 @@ def test_rrf_only_selector_ignores_title_and_source_quotas():
         doc["doc_uid"] for doc in expected
     }
     assert [doc["title"] for doc in selected].count("Same title") == 2
+
+
+def test_rrf_title_dedup_only_prefers_distinct_titles():
+    duplicate_a = make_doc("a", "Same title", "Original A.", 1)
+    duplicate_b = make_doc("b", "Same title", "Original B.", 2)
+    distinct = make_doc("c", "Distinct title", "Original C.", 3)
+    pool = add_rrf_scores([duplicate_a, duplicate_b, distinct])
+
+    selected = select_rrf_title_diverse(
+        pool, final_topk=2, route="direct", max_same_title=1
+    )
+
+    assert {doc["doc_uid"] for doc in selected} == {"a", "c"}

@@ -1,7 +1,8 @@
 # RACP/EFC-RAG 论文实验计划与结果台账
 
 最后更新：2026-07-15
-当前已提交代码基线：`3b4d780`（后续 FLARE/TRACE/Adaptive-RAG 兼容性修改尚未提交）
+W11运行代码基线：`063e29dde59191c2c249ec1bde669834dc3e88ee` + title-dedup-only
+隔离diff（关键四文件hash已归档，本轮文档/代码提交负责将该diff固化到Git历史）
 
 ## 0. 下一轮对话快速交接
 
@@ -46,36 +47,38 @@ reranker 的条件下，自适应证据反馈路由比 Standard RAG、固定 Ful
 - FLARE、TRACE 和 Adaptive-RAG 已纳入主表候选。FLARE/TRACE 必须先通过当前
   Llama-3.1/BGE/no-reranker 环境兼容性审计；Adaptive-RAG 在取得并锁定分类器前不得
   启动正式全量。
-- 下一阶段不是继续调 HotpotQA QD，而是优先验证 2Wiki 和 MuSiQue 的跨数据集收益。
+- W11四项消融已全量验收：title-dedup-only较RRF-only恢复2.90 F1，证明title
+  diversity是selector的主要收益来源，但仍不能解释全部收益。
+- controlled final top5较完整EFC仅降0.58 F1；matched maximum retrieval budget较IRCoT
+  高0.67 F1，但只匹配最大检索预算；w/o redundancy未观察到penalty正收益。
 
 ### 0.3 下一步正式任务
 
-按顺序完成以下全量论文实验：
+当前优先级：
 
-1. 2Wiki：Standard RAG、IterRetGen、EFC-RAG；
-2. MuSiQue：Standard RAG、IterRetGen、EFC-RAG；
-3. 如果 EFC 至少在两个多跳数据集上超过 IterRetGen，再补 Full-QD、IRCoT、FLARE、
-   TRACE 和 Adaptive-RAG；
-4. 最后在 NQ test 上运行 No-RAG、Standard RAG、IterRetGen、FLARE、Adaptive-RAG
-   和 EFC-RAG；TRACE 只作为多跳方法评测。
+1. 对已完成主结果和消融统一重算answer-hit/support-title口径并做paired bootstrap；
+2. 将W11的`063e29d + title-dedup diff`归档到Git commit，不重跑已验收结果；
+3. 若篇幅需要更完整正交表，再补always-static或w/o title weight；
+4. TRACE和Adaptive-RAG保持暂停，只在明确要求且解决现有阻塞后恢复。
 
 任何新对话开始后，应先检查最新输出目录、GPU 进程和 Git 状态，确认没有上一轮已完成
 但尚未登记的正式结果，再决定下一条命令。
 
-### 0.4 当前未提交代码
+### 0.4 W11 运行时代码边界
 
-当前 Git 工作区不是 clean，已知修改包括：
+W11四项实验同秒启动于`063e29d`加同一份未提交diff。该diff只增加默认
+关闭的title-dedup-only隔离选择器、CLI/配置入口和测试：
 
 ```text
-examples/methods/run_exp.py
-flashrag/pipeline/active_pipeline.py
-flashrag/utils/pred_parse.py
+racp/config.yaml
+racp/efc.py
 racp/run_racp.py
+racp/test_efc.py
 ```
 
-这些修改包括 IRCoT no-reranker/cache 支持、pipeline 修复、答案解析和 EFC/QD 的干净
-vLLM 子进程生成。不要回滚。下一批正式论文实验前，应先审计 diff 并提交一个明确的
-实验基线 commit；提交后更新本文档顶部的 commit。
+`HP-AB-10/run_command.txt`保存了这四个文件的SHA-256，并与验收时工作区完全匹配；
+`HP-AB-11/12/13`的命令记录了同一code state，但没有各自独立的hash。本轮Git归档
+固化该diff后即可关闭provenance缺口；不要回滚或重跑已完成FINAL。
 
 ## 1. 文档用途与记录规则
 
@@ -936,7 +939,11 @@ EM/F1略低于No-RAG 0.41/1.57，说明单跳NQ上低置信度主动检索没有
 | `HP-AB-06` | HotpotQA | w/o role weight | `FINAL` | 完整dev 7,405条；仅将`role_weight`从0.30改为0，其余锁定参数不变；cache-only |
 | `HP-AB-07` | HotpotQA | w/o original seed reservation | `FINAL` | 完整dev 7,405条；仅将`original_seed_count`从4改为0；cache-only |
 | `HP-AB-08` | HotpotQA | w/o source weight | `FINAL` | 完整dev 7,405条；仅将`source_weight`从0.05改为0；cache-only；汇总指标与完整EFC完全相同 |
-| `HP-AB-09` | HotpotQA | RRF-only selector | `RUNNING` | GPU0；tmux `racp_hp_ab09_0715`；三种route统一只按RRF选final top10；完整EFC cache-only；默认EFC路径不变 |
+| `HP-AB-09` | HotpotQA | RRF-only selector | `FINAL` | 完整dev 7,405条；三个route统一只按RRF选final top10；完整EFC cache-only；默认EFC路径不变 |
+| `HP-AB-10` | HotpotQA | title-dedup-only selector | `FINAL` | 完整dev 7,405条；三个route仅保留融合RRF与title-diverse first pass；cache-only |
+| `HP-AB-11` | HotpotQA | controlled final top5 | `FINAL` | 完整dev 7,405条；仅将锁定EFC的final/评测K从10改为5；cache-only |
+| `HP-AB-12` | HotpotQA | matched maximum retrieval budget | `FINAL` | 完整dev 7,405条；initial5、最多1条generation query×top5、关闭static；最多2次逻辑检索和10篇raw文档 |
+| `HP-AB-13` | HotpotQA | w/o redundancy penalty | `FINAL` | 完整dev 7,405条；仅将`redundancy_weight=0.01`改为0；cache-only |
 | `MU-AB-01` | MuSiQue | EFC-RAG 完整方法 | `FINAL` | 复用 `MU-NR-07`，无需重跑 |
 | `MU-AB-02` | MuSiQue | generation-guided-only | `FINAL` | 完整dev 2,417条；强制generation-guided并关闭static fallback；2,407条generation-guided、10条direct fallback |
 | `MU-AB-03` | MuSiQue | Full-QD | `FINAL` | 复用 `MU-NR-04`，无需重跑 |
@@ -995,6 +1002,61 @@ Precision/Recall/Retrieval Recall@10分别为35.80/47.09/42.36/48.76/49.37/71.41
 候选池和route分布也相同。该结论只证明当前数据和设置下汇总指标无变化，不外推为该项
 在所有数据集恒无作用。
 
+`HP-AB-09` 的 FINAL 输出为
+`output/hotpotqa_2026_07_15_12_46_hotpotqa-efc-rrf-only-top10-full`。
+结果覆盖7,405/7,405条，运行时间12:46:34--13:41:43，总耗时55:09；EM/F1/Acc/
+Precision/Recall/Retrieval Recall@10分别为33.30/43.67/39.30/45.19/46.04/67.13。
+route和调用预算与完整EFC相同，但三个route均只按融合RRF选择final top10，绕过role/title/
+source/redundancy、original seed reservation、title diversity和static配额。support-title recall
+从完整EFC的68.11%降至47.45%，双支持标题命中率从51.24%降至22.96%，证明组合selector
+整体有效；该结果不能单独归因于任一组件。
+
+`HP-AB-10` 的 FINAL 输出为
+`output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-title-dedup-only-top10-full`。
+结果覆盖7,405/7,405条，运行时间13:54:21--14:49:56，总耗时55:35；EM/F1/Acc/
+Precision/Recall/Retrieval Recall@10分别为35.18/46.57/41.78/48.20/48.90/70.90。
+7,405条均使用`efc_rrf_title_dedup_only`：先按融合RRF排序，每个小写title优先一篇，
+不足10篇时再按RRF回填重复title；role/source/redundancy、original seed和static quota均
+不参与选择。平均LLM/检索调用2.8718/1.9332、候选池25.5246篇、最终10篇，route与
+完整EFC一致。相对RRF-only，EM/F1/answer-hit分别提高1.88/2.90/3.77个百分点；相对
+完整EFC仍低0.68/0.64/0.61个百分点，说明title diversity恢复了selector增益的大部分，
+但不能把全部增益只归因于title。
+
+`HP-AB-11` 的 FINAL 输出为
+`output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-final-top5-controlled-full`。
+结果覆盖7,405/7,405条，运行时间13:54:22--14:40:50，总耗时46:28；EM/F1/Acc/
+Precision/Recall/Retrieval Recall@5分别为35.53/46.63/41.82/48.21/48.71/66.31。
+除`final_topk=5`和评测K=5外，其余锁定参数、route、调用预算和候选池与完整EFC一致；
+全部样本最终正好5篇。相对完整EFC的EM/F1仅低0.32/0.58个百分点，但Recall@5与
+Recall@10预算不同，不能把5.20个百分点差值解释为同口径检索退化。该实验只缩短最终
+context，不减少Probe、Planner或检索调用。
+
+`HP-AB-12` 的 FINAL 输出为
+`output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-ircot-matched-budget10-full`。
+结果覆盖7,405/7,405条，运行时间13:54:22--14:46:20，总耗时51:58；EM/F1/Acc/
+Precision/Recall/Retrieval Recall@10分别为36.66/48.17/43.58/49.71/50.60/69.82。
+该变体把initial/gen top-k均设为5、关闭static-QD，因而满足预先锁定的最多2次逻辑检索、
+最多10篇raw文档和final K不超过10；实际平均LLM/检索调用2.8089/1.8089，候选池和最终
+文档均值7.8357、范围5--10，route为1,415条direct和5,990条generation-guided。
+它相对正式IRCoT高0.41 EM、0.67 F1和5.05个answer-hit百分点，但只匹配**最大检索预算**，
+不匹配prompt、推理机制或逐样本LLM成本，且同时改变initial top-k、gen top-k和static路线，
+不能作为单参数消融。运行从22,606键源cache读取，只在独立FINAL cache中新增4条动态query；
+`run.log`把variable-K support-title诊断标作`@5`是显示标签问题，论文应写final-context
+support-title recall，不把它解释为统一K=5。
+
+`HP-AB-13` 的 FINAL 输出为
+`output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-no-redundancy-weight-top10-full`。
+结果覆盖7,405/7,405条，运行时间13:54:21--14:53:41，总耗时59:20；EM/F1/Acc/
+Precision/Recall/Retrieval Recall@10分别为36.04/47.46/42.59/49.16/49.65/72.21。
+只将`redundancy_weight`从0.01改为0，route、调用预算、候选池和final10与完整EFC一致；
+2,655条非direct样本的selected docs发生变化，证明开关实际生效。汇总F1比完整EFC高0.25，
+因此当前HotpotQA没有观察到redundancy penalty的正收益。由于相同context下仍观察到少量
+确定性生成文本漂移，这个小差值应经paired检验后再解释，不能声称移除惩罚可稳定提升。
+
+W11四项均使用commit `063e29d`加运行时未提交的title-dedup隔离diff；AB10保存了四个
+关键文件SHA-256，另外三项的`run_command.txt`记录相同code state。四项同秒启动，当前
+关键文件hash仍与AB10归档一致；投稿复现包必须把该diff固化到commit，不需要重跑结果。
+
 只有最终确实进入论文消融表的运行才会在本节填写结果。router 阈值搜索和调试版本不记录。
 
 ## 7. 正式执行顺序
@@ -1025,7 +1087,10 @@ Precision/Recall/Retrieval Recall@10分别为35.80/47.09/42.36/48.76/49.37/71.41
   只有3项。w/o role weight `HP-AB-06`仍在GPU0执行最终生成。
 - W9四项均已完成并登记FINAL：w/o static-QD `HP-AB-04`使用独立合并cache，w/o role
   `HP-AB-06`、w/o original seed reservation `HP-AB-07`和w/o source weight `HP-AB-08`
-  均cache-only；四项完整覆盖7,405条。下一项为`HP-AB-09` RRF-only selector。
+  均cache-only；四项完整覆盖7,405条。W10 RRF-only `HP-AB-09`也已FINAL。
+- W11四项`HP-AB-10/11/12/13`均已结束并通过FINAL验收。只有matched maximum budget
+  运行发生4条online cache miss并写入独立cache，其余三项完整EFC cache-only；当前无
+  W11 Python进程或tmux会话。
 - `2W-NR-04` Full-QD、`2W-NR-05` IRCoT 和 `MU-NR-01` No-RAG 已完成并登记 FINAL。
 - MuSiQue 公共缓存链接：
   `output/cache/musique_dev_bge_large_no_rerank_top20_retrieval_cache.json`。
@@ -1044,10 +1109,12 @@ Precision/Recall/Retrieval Recall@10分别为35.80/47.09/42.36/48.76/49.37/71.41
 | W7（完成） | HotpotQA generation-guided-only消融已完成 | 独立合并cache已保存 | `HP-AB-03`已FINAL |
 | W8（完成） | MuSiQue generation-guided-only已FINAL；HotpotQA w/o static-QD旧cache-only运行安全失败 | HotpotQA direct-only已FINAL | 失败目录不登记，转W9独立cache重跑 |
 | W9（完成） | GPU1重跑HotpotQA w/o static-QD并在线补齐动态query | GPU0 w/o role、GPU3 w/o original seed、GPU4 w/o source均cache-only | `HP-AB-04/06/07/08`均FINAL |
-| W10（进行中） | 无新增检索；复用完整HotpotQA EFC cache | GPU0 HotpotQA RRF-only selector，单卡cache-only | `HP-AB-09`完整7,405条并通过FINAL审计 |
+| W10（完成） | 无新增检索；复用完整HotpotQA EFC cache | GPU0 HotpotQA RRF-only selector，单卡cache-only | `HP-AB-09`已FINAL |
+| W11（完成） | GPU3 matched maximum retrieval budget，4条新query写独立cache | GPU0 title-dedup-only、GPU1 final top5、GPU4 w/o redundancy均cache-only | `HP-AB-10/11/12/13`均FINAL |
 
-默认仍只安排一个会高频搜索Flat index的任务。W9四项已结束，当前GPU0运行
-`HP-AB-09` RRF-only selector；该项不改变router或查询集合，使用完整HotpotQA EFC cache-only。
+默认仍只安排一个会高频搜索Flat index的任务。W11已结束，当前没有这四项
+消融对应的Python进程或tmux会话。增加任务前仍需检查GPU/CPU/NUMA资源，并继续
+遵守本项目最多4张GPU的限制。
 全部TRACE均无Python进程。增加任务前仍需检查显存、内存、CPU和独立缓存写入路径，并继续
 遵守本项目最多4张GPU的限制。
 
@@ -1097,6 +1164,9 @@ Precision/Recall/Retrieval Recall@10分别为35.80/47.09/42.36/48.76/49.37/71.41
 
 | 日期 | 更新内容 |
 |---|---|
+| 2026-07-15 | 验收并登记W11四项HotpotQA消融FINAL：`HP-AB-10` title-dedup-only为35.18/46.57/70.90@10，`HP-AB-11` controlled final top5为35.53/46.63/66.31@5，`HP-AB-12` matched maximum retrieval budget为36.66/48.17/69.82@≤10，`HP-AB-13` w/o redundancy为36.04/47.46/72.21@10（EM/F1/answer-hit）；四项均完整7,405条、无异常或缺失预测。AB12只匹配最大检索预算而非完整计算预算；AB13未观察到冗余惩罚正收益。运行代码为`063e29d`加已识别diff，提交后无需重跑。 |
+| 2026-07-15 | 启动W11四项HotpotQA扩展消融：GPU0/tmux `racp_hp_ab10_0715`运行title-dedup-only，GPU1/tmux `racp_hp_ab11_0715`运行受控final top5，GPU3/tmux `racp_hp_ab12_0715`运行IRCoT-matched retrieval budget（预锁定最多2次逻辑查询、10篇raw文档、final K≤10），GPU4/tmux `racp_hp_ab13_0715`运行w/o redundancy；仅matched-budget允许在线补cache且只写独立输出，其余cache-only；title-dedup-only为默认关闭的新隔离开关，34/34直接回归测试通过 |
+| 2026-07-15 | 审计并登记HotpotQA RRF-only selector `HP-AB-09` FINAL：完整7,405条，EM/F1/Retrieval Recall@10为33.30/43.67/67.13，总耗时55:09；相对完整EFC低2.55/3.54/4.38个百分点，support-title recall和双支持命中分别从68.11%/51.24%降至47.45%/22.96%，证明组合selector整体有效但不能把全部增益归因于单一权重 |
 | 2026-07-15 | GPU0/tmux `racp_hp_ab09_0715`启动W10 HotpotQA RRF-only selector：新增默认关闭的`rrf_only_selection`隔离开关，三个route均按融合RRF分数选final top10，绕过role/title/source/redundancy、original seed reservation、title diversity与static配额；router、查询和生成设置不变，复用22,590键完整EFC cache并cache-only；代码hash、测试与完整命令已归档 |
 | 2026-07-15 | 审计并登记W9四项HotpotQA消融FINAL：`HP-AB-04` w/o static-QD为35.76/47.09/71.49，`HP-AB-06` w/o role为35.77/47.02/71.05，`HP-AB-07` w/o original seed reservation为35.80/47.09/71.41，`HP-AB-08` w/o source为35.85/47.21/71.51（EM/F1/Retrieval Recall@10）；四项均覆盖7,405条且归档实际命令，后三项cache-only，AB04只向独立FINAL目录保存补齐cache |
 | 2026-07-15 | 按最多4张本项目GPU的限制启动W9：GPU1/tmux `racp_hp_ab04_v3_0715`重跑w/o static-QD `HP-AB-04`，复用旧cache、允许动态query miss并将补齐后的合并cache只写新输出目录；GPU3/tmux `racp_hp_ab07_0715`启动w/o original seed reservation，GPU4/tmux `racp_hp_ab08_0715`启动w/o source weight，后二者cache-only；连同GPU0的w/o role共4卡，GPU2其他用户进程保持不动 |

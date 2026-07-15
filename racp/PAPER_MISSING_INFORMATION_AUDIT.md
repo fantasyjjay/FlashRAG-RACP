@@ -4,6 +4,10 @@
 审计范围：`PAPER_RESULTS_REFERENCE.md` 中的 26 个 FINAL 主实验、`PAPER_EXPERIMENT_PLAN.md`、全部相关输出、当前代码与 Git 历史。
 审计约束：本次没有修改实验代码、删除文件、停止或启动实验，也没有重新调用生成模型或检索器；只新增本报告。
 
+> **2026-07-15 补充审计：** HotpotQA `HP-AB-02/03/04/06/07/08/09/10/11/12/13`
+> 已按同一验收清单登记为 FINAL。本文第七节、最终缺口分类和优先级已同步更新；
+> 文末“当前现场快照”仍保留2026-07-14原始审计现场，不应解读为当前进程状态。
+
 ## 审计口径与最重要结论
 
 - 26 个 FINAL 均有 `config.yaml`、`metric_score.txt` 和 `intermediate_data.json`；逐样本 ID 与目标 split 的数量、集合和顺序完全一致，没有缺失预测字段或逐样本 EM/F1。
@@ -397,26 +401,30 @@ vLLM 还会在 [`flashrag/generator/generator.py`](../flashrag/generator/generat
 
 | 项目 | 状态 | 目录 / 配置 / 样本数 / 指标 |
 |---|---|---|
-| generation-guided-only | `PARTIAL`（FULL-COMPLETE/UNREGISTERED） | [D](output/hotpotqa_2026_07_14_13_49_hotpotqa-efc-force-generation-guided-no-static-top10-full/)；[config](output/hotpotqa_2026_07_14_13_49_hotpotqa-efc-force-generation-guided-no-static-top10-full/config.yaml)；n=7,405；EM 35.61、F1 46.95、RetrievalAnswerHit@10 71.60；全量完成但台账未登记 |
-| always-direct | `NOT FOUND` | 没有 `force_route=direct` EFC；Standard RAG 不能代表仍含 probe 的 EFC-direct 成本 |
+| generation-guided-only | `FINAL` | [D](output/hotpotqa_2026_07_14_13_49_hotpotqa-efc-force-generation-guided-no-static-top10-full/)；n=7,405；EM/F1/AnswerHit@10=35.61/46.95/71.60；实际7,371条generation、34条direct fallback |
+| always-direct | `FINAL` | [D](output/hotpotqa_2026_07_15_10_01_hotpotqa-efc-force-direct-top10-full/)；n=7,405；33.59/44.58/65.63；仍含probe+final两次LLM |
 | always-static-QD | `SMOKE` | 5 个 `force_route=static_qd`、n=1、final5 的准备产物；均无完整预测/metric |
-| w/o static-QD | `NOT FOUND` | 没有保持 auto router、只关闭 static fallback 的干净实验；force-generation 同时改变 router |
+| w/o static-QD | `FINAL` | [D](output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-auto-no-static-top10-full-v3-online-fill/)；n=7,405；35.76/47.09/71.49；auto router保持，static映射到direct |
 | w/o router | `PARTIAL`（混杂） | 上述固定 generation-guided 可作一种去 router 对照，但同时关闭 static，属于混杂而非完整 router 消融 |
-| w/o role weight | `NOT FOUND` | 未发现 `role_weight=0` |
-| w/o source weight | `NOT FOUND` | 未发现 `source_weight=0` |
+| w/o role weight | `FINAL` | [D](output/hotpotqa_2026_07_15_10_16_hotpotqa-efc-no-role-weight-top10-full/)；n=7,405；35.77/47.02/71.05 |
+| w/o source weight | `FINAL` | [D](output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-no-source-weight-top10-full/)；n=7,405；35.85/47.21/71.51；六项汇总与完整EFC相同 |
 | w/o title weight | `NOT FOUND` | 未发现 `title_weight=0` |
-| w/o redundancy penalty | `NOT FOUND` | 未发现 `redundancy_weight=0` |
-| w/o original seed reservation | `NOT FOUND` | 未发现 `original_seed_count=0` |
-| RRF-only | `NOT FOUND` | 未发现 selector bonus/penalty 清零、仅保留 RRF 的配置 |
-| title-dedup-only | `NOT FOUND`（EFC） | Full-QD 有 title-dedup 历史运行，但 planner/检索流程也不同，不是 EFC 隔离消融 |
+| w/o redundancy penalty | `FINAL` | [D](output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-no-redundancy-weight-top10-full/)；n=7,405；36.04/47.46/72.21；未观察到penalty正收益 |
+| w/o original seed reservation | `FINAL` | [D](output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-no-original-seed-top10-full/)；n=7,405；35.80/47.09/71.41 |
+| RRF-only | `FINAL` | [D](output/hotpotqa_2026_07_15_12_46_hotpotqa-efc-rrf-only-top10-full/)；n=7,405；33.30/43.67/67.13 |
+| title-dedup-only | `FINAL` | [D](output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-title-dedup-only-top10-full/)；n=7,405；35.18/46.57/70.90；隔离的RRF+title-diverse selector |
 | MMR | `PARTIAL` | 找到历史 50/1,000 样本实验，使用 E5 和/或 reranker，与锁定 BGE/no-reranker 条件不一致 |
 | fixed original/expanded quota | `NOT FOUND` | 当前 static 分支有配额，但没有有/无配额受控对照 |
-| final top5 | `PARTIAL` | Hotpot EFC 旧全量 n=7,405，EM/F1 26.12/34.12，旧代码/参数混杂 |
+| final top5 | `FINAL` | [D](output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-final-top5-controlled-full/)；n=7,405；35.53/46.63/66.31@5；只改final/评测K |
 | final top6 | `PARTIAL` | 多个 Hotpot 旧全量，EM/F1 33.65/44.50 至 35.57/46.69；router/seed/static 同时变化 |
 | final top10 | `FINAL` | 四个正式 EFC 主结果，完整目标 split；目录、config、n 和指标见表 1.1 的 HP/2W/MU/NQ EFC 行 |
-| matched retrieval budget | `NOT FOUND` | 输出、日志与 Git 历史均未发现 |
+| matched retrieval budget | `FINAL` | [D](output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-ircot-matched-budget10-full/)；n=7,405；36.66/48.17/69.82@<=10；匹配最大2次query/10篇raw docs，非完整计算成本匹配 |
 
-generation-guided-only 的实际 route 字段是 7,371 条 generation-guided、34 条 direct fallback；运行于 2026-07-14 13:48:59–15:17:04，单卡，总计 1:28:05，日志无异常。论文若采用，应先在正式台账审核登记，并写“强制 generation-guided、失败时 fallback”，不能声称 100% expansion 成功，也不需要为取得同一结果重新运行。
+generation-guided-only 的实际 route 字段是 7,371 条 generation-guided、34 条 direct fallback；运行于 2026-07-14 13:48:59–15:17:04，单卡，总计 1:28:05，日志无异常。它已登记FINAL，论文必须写“强制 generation-guided、失败时 fallback”，不能声称 100% expansion 成功。
+
+W11四项均覆盖7,405条且无缺失预测。matched-budget只锁定最大检索调用与raw-document
+上限，不匹配prompt或推理路径；final top5的answer-hit为@5；`run.log`对variable-K
+support-title的`@5`显示不能当作统一K口径。这些限制不影响FINAL完整性，但必须进入论文表注。
 
 Always-static 的 5 个单样本目录为 `rs-mhr-static-smoke`（三个时间版本）、`rs-mhr-planner3b-smoke` 和 `rs-mhr-cache-only-smoke`；无 `metric_score.txt`，不得报告成绩。Router v2–v6 等 200 样本目录也只是开发 smoke，且有些目录名与实际 `force_route:auto` 不一致。
 
@@ -554,7 +562,7 @@ PY
 - 最终 prompts、parser、stop、max-token 差异，以及 IRCoT demonstration/专用 parser、FLARE 空 context。来源：第五节所列代码与持久化 prompt。
 - EFC route 比例、route-wise EM/F1、planner failure/repair、候选池、三阶段支持标题转化与失败漏斗。来源：四个 EFC FINAL、缓存与数据集 metadata；见第六节。
 - 显著性检验所需的逐样本 ID/gold/pred/EM/F1 均完整且严格对齐。来源：第九节哈希核对。
-- Hotpot generation-guided-only 已全量完成这一事实及其产物，但它在登记前只能写作“完整未登记的消融”，不能写入正式 FINAL 表。
+- HotpotQA已登记的direct/generation-only、w/o static/role/source/seed/redundancy、RRF-only、title-dedup-only、controlled top5和matched maximum retrieval budget全量消融；来源为第七节目录及[`PAPER_EXPERIMENT_PLAN.md`](PAPER_EXPERIMENT_PLAN.md)。
 
 ## B. 可以通过重新统计得到，不需要重新调用模型
 
@@ -562,15 +570,15 @@ PY
 - 为 HP/2W/MU 统一适配 supporting-title 字段与 robust title normalization；另做 redirect/alias 映射敏感性版本。
 - 扫描 `wiki18_100w` corpus，先确认 gold support title/paragraph 是否存在，再把“语料缺失”和“retriever miss”拆开。
 - 对四数据集已保存逐样本 EM/F1 执行 paired bootstrap 置信区间、paired randomization p 值，并对成组 p 值做 Holm–Bonferroni 校正。
-- 将已经完成的 generation-guided-only 逐项审核后登记；无需重新生成。
+- 对新登记消融使用已保存的逐样本EM/F1做paired bootstrap，并单独检查小于0.3个百分点的差异。
 - Full-QD planner input 可由保存的问题、实际 planner output 与锁定模板重构并统计；EFC 的 probe/planner input 可重构出近似/模板一致 token，但因缺实际 planner raw output，不能恢复严格完整的 EFC output-token 总量。
 - 生成 route/type/question-category 的进一步分层表、证据已全但 F1 非满分的分析、selector loss 样本清单，都可离线得到。
 
 ## C. 必须重新运行实验或带 instrumentation 的补测
 
-- 干净的核心消融：auto router 下只关闭 static-QD、always-direct EFC、RRF-only，以及关键 selector 组件（至少 role/source/original-seed reservation）。现有 generation-only 不能替代这些。
-- matched retrieval budget 对比：当前只匹配了 final context K=10，没有匹配 query 数、raw retrieved documents 或 LLM 调用数。
-- 受控 final top-k 敏感性：旧 top5/top6 同时改变过 router/seed/static 等，不能作为 K-only 曲线。
+- 尚缺的隔离消融只包括always-static、w/o title weight、fixed-quota/MMR等扩展项；auto w/o static、always-direct、role/source/seed/redundancy、RRF-only、title-dedup-only已有FINAL。
+- matched maximum retrieval budget已完成；若论文要求token-level或完全LLM成本匹配，仍需新的instrumented实验，不能把当前结果改名为完全成本匹配。
+- 受控 final top5/top10 已在同一router/代码下完成；若需要曲线仍可补top6/8，但不是核心缺口。
 - 参数敏感性或单变量搜索：现有历史不能证明各权重/阈值的独立贡献。
 - 峰值显存：至少需对代表性方法做相同批量和同一 GPU 的 `nvidia-smi`/框架峰值监控；历史 FINAL 的峰值无法追溯。
 - FLARE 的严格 input/output token、被丢弃 speculative generation、物理 cache miss 和逐阶段延迟，必须带 instrumentation 补跑；仅从最终拼接文本无法恢复。
@@ -584,21 +592,18 @@ PY
 ### P0：投稿前必须完成
 
 1. **无模型调用：** 更正 `Retrieval Recall` 命名并统一离线重算 final-context @5/@10、support-title 与 paired bootstrap；这是当前结果表口径正确性的前提。
-2. **无模型调用：** 审核并正式登记已完成的 Hotpot generation-guided-only，不重跑。
-3. **新实验：** 做一个干净的 `auto router + w/o static-QD`，隔离 static fallback 的贡献。
-4. **新实验：** 做 matched-retrieval-budget 主对比；预先锁定匹配轴（逻辑 query 数、raw document budget、final K）并同时报告 LLM 成本，避免事后选择有利口径。
+2. **无模型调用：** 对EFC/IRCoT与四项W11结果做paired bootstrap，并将matched-budget名称锁定为“matched maximum retrieval budget”。
+3. **无模型调用：** 将W11的`063e29d + title-dedup diff`固化到可引用commit/补丁manifest；结果无需重跑。
 
 ### P1：强烈建议补充
 
-1. always-direct EFC，用于分离“probe 成本”和“router/expansion 收益”；Standard RAG 不能替代该成本对照。
-2. RRF-only、w/o role weight、w/o source weight、w/o original seed reservation 四项中的最小正交子集；优先 role 与 original-seed，因为权重/保留机制影响最大。
-3. 在同一 commit、同一 router 下做 final top5/top10 受控敏感性；不复用旧混杂结果。
-4. 做 instrumented 效率 profile：代表性固定子集上记录每次 prompt/output token、cache hit/miss、阶段延迟与峰值显存；质量 FINAL 不必重跑。
-5. IRCoT no-demo 或统一 parser 的公平性控制，至少在 HotpotQA 和 2Wiki 上做。
+1. always-static-QD或w/o title weight中至少补一项，用于完善router/selector正交表；现有always-static只是smoke。
+2. 做 instrumented 效率 profile：代表性固定子集上记录每次 prompt/output token、cache hit/miss、阶段延迟与峰值显存；质量 FINAL 不必重跑。
+3. IRCoT no-demo 或统一 parser 的公平性控制，至少在 HotpotQA 和 2Wiki 上做。
 
 ### P2：篇幅和算力允许时
 
-1. w/o title weight、w/o redundancy penalty、固定配额有/无及更细参数敏感性。
+1. w/o title weight、固定配额有/无、MMR及更细参数敏感性；w/o redundancy已有FINAL。
 2. 更完整的 router threshold/规则敏感性；centroid router 若不进入论文主方法则无需补。
 3. 采用论文式 continuation prompt 的 FLARE 实现对照；当前 FLARE 结果应明确标为 FlashRAG 本地实现。
 4. 对 MuSiQue 做 support-sentence 而不只是 title 级诊断；对 NQ 使用适合单跳数据的 evidence provenance 指标。

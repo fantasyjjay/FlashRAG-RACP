@@ -835,6 +835,35 @@ def select_rrf_only(candidate_pool, final_topk, route):
     return order_context(ranked_docs[:final_topk], route)
 
 
+def select_rrf_title_diverse(
+    candidate_pool, final_topk, route, max_same_title=1
+):
+    """Select by RRF while reserving capacity for distinct document titles."""
+    ranked_docs = sorted(
+        candidate_pool,
+        key=lambda doc: (
+            -float(doc.get("rrf_score", 0.0)),
+            min(doc.get("ranks", {}).values(), default=10**9),
+            str(doc.get("doc_uid", "")),
+        ),
+    )
+    selected = []
+    deferred = []
+    title_counts = Counter()
+    for doc in ranked_docs:
+        title_key = doc_title(doc).lower()
+        if title_counts[title_key] >= max_same_title:
+            deferred.append(doc)
+            continue
+        selected.append(doc)
+        title_counts[title_key] += 1
+        if len(selected) == final_topk:
+            return order_context(selected, route)
+
+    selected.extend(deferred[: max(0, final_topk - len(selected))])
+    return order_context(selected, route)
+
+
 def order_context(selected, route):
     def source_rank(doc, prefix):
         ranks = [

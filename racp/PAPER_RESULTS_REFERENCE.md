@@ -26,7 +26,8 @@
 
 - TRACE：HotpotQA、2Wiki 已暂停，MuSiQue 运行失败，三者均无 FINAL。
 - Adaptive-RAG：缺少可审计的官方 classifier checkpoint，当前暂停。
-- HotpotQA RRF-only selector：正在运行，尚无 FINAL。
+- HotpotQA W11的title-dedup-only、controlled final top5、matched maximum retrieval
+  budget和w/o redundancy已全部通过全量验收并登记FINAL。
 - Full-QD 和 IRCoT 不进入 NQ 主表，这是预先规定的 `N/A`，不是漏测。
 
 ## 2. 数据集与评测范围
@@ -272,19 +273,28 @@ FLARE 未触发检索时，`retrieval_result` 是合法空列表，其 Retrieval
 
 ## 8. 已完成消融结果
 
-| 数据集 | ID | 变体 | EM | F1 | Acc | Precision | Recall | Retrieval Recall@10 |
+| 数据集 | ID | 变体 | EM | F1 | Acc | Precision | Recall | Retrieval Recall（实际K） |
 |---|---|---|---:|---:|---:|---:|---:|---:|
-| HotpotQA | `HP-AB-01` | 完整EFC | **35.85** | **47.21** | **42.35** | **48.89** | **49.43** | 71.51 |
+| HotpotQA | `HP-AB-01` | 完整EFC | 35.85 | 47.21 | 42.35 | 48.89 | 49.43 | 71.51 (@10) |
 | HotpotQA | `HP-AB-02` | direct-only | 33.59 | 44.58 | 39.91 | 46.14 | 46.83 | 65.63 |
-| HotpotQA | `HP-AB-03` | generation-guided-only | 35.61 | 46.95 | 42.07 | 48.65 | 49.12 | **71.60** |
+| HotpotQA | `HP-AB-03` | generation-guided-only | 35.61 | 46.95 | 42.07 | 48.65 | 49.12 | 71.60 (@10) |
 | HotpotQA | `HP-AB-04` | w/o static-QD | 35.76 | 47.09 | 42.15 | 48.80 | 49.22 | 71.49 |
 | HotpotQA | `HP-AB-05` | Full-QD | 33.67 | 44.59 | 40.23 | 46.16 | 46.90 | 65.04 |
 | HotpotQA | `HP-AB-06` | w/o role weight | 35.77 | 47.02 | 42.20 | 48.67 | 49.24 | 71.05 |
 | HotpotQA | `HP-AB-07` | w/o original seed reservation | 35.80 | 47.09 | 42.36 | 48.76 | 49.37 | 71.41 |
-| HotpotQA | `HP-AB-08` | w/o source weight | **35.85** | **47.21** | **42.35** | **48.89** | **49.43** | 71.51 |
+| HotpotQA | `HP-AB-08` | w/o source weight | 35.85 | 47.21 | 42.35 | 48.89 | 49.43 | 71.51 (@10) |
+| HotpotQA | `HP-AB-09` | RRF-only selector | 33.30 | 43.67 | 39.30 | 45.19 | 46.04 | 67.13 (@10) |
+| HotpotQA | `HP-AB-10` | title-dedup-only selector | 35.18 | 46.57 | 41.78 | 48.20 | 48.90 | 70.90 (@10) |
+| HotpotQA | `HP-AB-11` | controlled final top5 | 35.53 | 46.63 | 41.82 | 48.21 | 48.71 | 66.31 (@5) |
+| HotpotQA | `HP-AB-12` | matched maximum retrieval budget | **36.66** | **48.17** | **43.58** | **49.71** | **50.60** | 69.82 (@≤10) |
+| HotpotQA | `HP-AB-13` | w/o redundancy penalty | 36.04 | 47.46 | 42.59 | 49.16 | 49.65 | **72.21 (@10)** |
 | MuSiQue | `MU-AB-01` | 完整EFC | **9.93** | **17.65** | **13.24** | **18.31** | **19.21** | **42.08** |
 | MuSiQue | `MU-AB-02` | generation-guided-only | 9.64 | 17.45 | 12.95 | 18.12 | 19.04 | 41.54 |
 | MuSiQue | `MU-AB-03` | Full-QD | 7.61 | 15.42 | 10.30 | 16.17 | 16.60 | 33.88 |
+
+表中未单独标注的HotpotQA/MuSiQue消融均为@10；`HP-AB-11`是受控@5，
+`HP-AB-12`的实际final context为5--10篇。这里的Retrieval Recall仍是现有evaluator
+的gold-answer string containment hit rate，不是supporting-title recall。
 
 HotpotQA direct-only覆盖7,405/7,405条，全部走direct；平均LLM/检索调用为2.0000/1.0000，
 平均候选池20篇、最终10篇，总耗时42:46。完整EFC的EM/F1/Retrieval Recall分别高
@@ -299,6 +309,29 @@ HotpotQA新增四项均覆盖7,405/7,405条。w/o static-QD、w/o role weight、
 seed reservation相对完整EFC的F1分别下降0.12、0.19、0.12个百分点；w/o source weight
 的六项汇总指标与完整EFC完全相同。w/o static-QD使用auto router，static样本转为direct，
 其余三项保持与完整EFC相同的route分布和调用预算。
+
+RRF-only同样覆盖7,405条，route和调用预算与完整EFC相同，但F1下降3.54个百分点，
+support-title recall和双支持标题命中率分别下降20.66和28.28个百分点。结合标题唯一率
+99.53%→70.54%，说明selector组合约束的重要价值来自title diversity。
+
+title-dedup-only把RRF-only的EM/F1/answer-hit分别恢复1.88/2.90/3.77个百分点，但仍比
+完整EFC低0.68/0.64/0.61个百分点。这说明title diversity解释了组合selector收益的大部分，
+但role/source/original seed/static packing的剩余组合贡献仍存在，不能把全部收益只归因于
+标题去重。该变体的route、调用预算和候选池与完整EFC相同，7,405条全部使用隔离的
+`efc_rrf_title_dedup_only`选择器。
+
+controlled final top5只改变final与评测K，EM/F1相对完整EFC仅下降0.32/0.58个百分点；
+它不减少Probe、Planner或检索调用，只减少最终context。其66.31是Recall@5，不能与
+其他消融的Recall@10直接作等预算排序。
+
+matched maximum retrieval budget把initial/gen top-k均设为5并关闭static，严格满足最多
+2次逻辑检索和10篇raw文档；实际平均检索1.8089次、最终文档7.8357篇。它比正式IRCoT
+高0.41 EM、0.67 F1和5.05个answer-hit百分点，但只匹配最大检索预算，不匹配prompt、
+推理机制或逐样本LLM成本，也不是单变量消融。论文中不得简写成“完全同预算”。
+
+w/o redundancy只将权重0.01改为0，F1与answer-hit反而高0.25/0.70个百分点。因此当前
+HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有少量生成文本漂移，这一小幅
+差值应配合paired检验表述为“未观察到收益”，不宣称移除惩罚能稳定提升。
 
 ## 9. 可用于论文的主要结论
 
@@ -358,6 +391,11 @@ seed reservation相对完整EFC的F1分别下降0.12、0.19、0.12个百分点�
 | HP-AB-06 | w/o role weight | [`output/hotpotqa_2026_07_15_10_16_hotpotqa-efc-no-role-weight-top10-full`](output/hotpotqa_2026_07_15_10_16_hotpotqa-efc-no-role-weight-top10-full) |
 | HP-AB-07 | w/o original seed reservation | [`output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-no-original-seed-top10-full`](output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-no-original-seed-top10-full) |
 | HP-AB-08 | w/o source weight | [`output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-no-source-weight-top10-full`](output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-no-source-weight-top10-full) |
+| HP-AB-09 | RRF-only selector | [`output/hotpotqa_2026_07_15_12_46_hotpotqa-efc-rrf-only-top10-full`](output/hotpotqa_2026_07_15_12_46_hotpotqa-efc-rrf-only-top10-full) |
+| HP-AB-10 | title-dedup-only selector | [`output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-title-dedup-only-top10-full`](output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-title-dedup-only-top10-full) |
+| HP-AB-11 | controlled final top5 | [`output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-final-top5-controlled-full`](output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-final-top5-controlled-full) |
+| HP-AB-12 | matched maximum retrieval budget | [`output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-ircot-matched-budget10-full`](output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-ircot-matched-budget10-full) |
+| HP-AB-13 | w/o redundancy penalty | [`output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-no-redundancy-weight-top10-full`](output/hotpotqa_2026_07_15_13_54_hotpotqa-efc-no-redundancy-weight-top10-full) |
 
 ### 2WikiMultiHopQA
 
@@ -398,6 +436,6 @@ seed reservation相对完整EFC的F1分别下降0.12、0.19、0.12个百分点�
 
 - TRACE 三个多跳数据集的最终质量、Retrieval Recall@5 与总耗时；当前按用户指令暂停。
 - Adaptive-RAG：只有取得并锁定 classifier 后才可加入。
-- HotpotQA RRF-only selector尚待完成；其余当前计划内HotpotQA/MuSiQue核心消融均已FINAL。
+- 当前预先计划的HotpotQA/MuSiQue核心与W11扩展消融均已FINAL；后续只按论文缺口新增实验。
 - 所有方法统一的端到端耗时、峰值显存和调用成本表；当前只有 EFC、FLARE、IRCoT 的
   部分效率信息已经完成审计。
