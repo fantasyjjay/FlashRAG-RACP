@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import traceback
@@ -332,6 +333,7 @@ def build_config_dict(args):
             "selection_method": args.selection_method,
             "selection_topk": args.selection_topk,
             "mmr_lambda": args.mmr_lambda,
+            "retrieval_cache_only": args.retrieval_cache_only,
             "mmr_embedding_model_path": str(args.mmr_embedding_model_path)
             if args.mmr_embedding_model_path is not None
             else None,
@@ -1883,6 +1885,68 @@ class EFC_CacheOnlyRetriever:
             f"{missing_queries[:3]}. Re-run without --retrieval_cache_only and with "
             "--save_retrieval_cache to fill generated-query results."
         )
+
+
+class RACP_CacheOnlyRetriever:
+    """Run the modified Adaptive-k selector from a complete no-reranker query cache."""
+
+    def __init__(self, config):
+        cache_path = config["retrieval_cache_path"]
+        if not cache_path:
+            raise ValueError("RACP --retrieval_cache_only requires --retrieval_cache_path.")
+        if config["use_reranker"]:
+            raise ValueError(
+                "RACP cache-only mode requires --no_reranker because the public cache "
+                "contains raw dense-retriever scores."
+            )
+        with Path(cache_path).open("r", encoding="utf-8") as f:
+            self.cache = json.load(f)
+        self.cache_path = cache_path
+        self.cache_only = True
+        self.use_cache = True
+        self.save_cache = False
+        self.use_reranker = False
+        self.reranker = None
+        self.encoder = None
+        self.topk = int(config["retrieval_topk"])
+        print(f"Loaded RACP cache-only retrieval data from: {cache_path}")
+
+    def batch_search(self, query, num=None, return_score=False):
+        query_list = [query] if isinstance(query, str) else list(query)
+        topk = self.topk if num is None else int(num)
+        missing_queries = [item for item in query_list if item not in self.cache]
+        if missing_queries:
+            raise ValueError(
+                "RACP retrieval cache is incomplete. Cache misses: "
+                f"{missing_queries[:3]}. Re-run without --retrieval_cache_only to fill it."
+            )
+
+        results = []
+        scores = []
+        for item in query_list:
+            cached_docs = self.cache[item]
+            if len(cached_docs) < topk:
+                raise ValueError(
+                    f"RACP cache has only {len(cached_docs)} documents for query {item!r}, "
+                    f"but retrieval_topk={topk}."
+                )
+            selected_docs = [dict(doc) for doc in cached_docs[:topk]]
+            try:
+                selected_scores = [float(doc["score"]) for doc in selected_docs]
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"RACP cache entry for query {item!r} has a missing or invalid score."
+                ) from exc
+            results.append(selected_docs)
+            scores.append(selected_scores)
+
+        if return_score:
+            return results, scores
+        return results
+
+    def _save_cache(self):
+        # Public experiment caches are immutable inputs in cache-only mode.
+        return None
 
 
 class QD_CacheOnlyRetriever:
@@ -3441,6 +3505,146 @@ def log_query_decomposition_statistics(dataset):
     )
 
 
+def build_racp_experiment_summary(config, dataset, metrics=None):
+    """Build an auditable summary for the modified gap-based Adaptive-k baseline."""
+
+    total = len(dataset)
+    adaptive_ks = [int(value) for value in dataset.adaptive_k] if total else []
+    final_doc_counts = [len(docs) for docs in dataset.retrieval_result] if total else []
+    candidate_counts = [len(docs) for docs in dataset.retrieval_result_full] if total else []
+    metric_topk = int((config["metric_setting"] or {}).get("retrieval_recall_topk", 10))
+    evaluated_doc_counts = [min(count, metric_topk) for count in final_doc_counts]
+    racp_config = config["racp_config"] or {}
+
+    def distribution(values):
+        return {str(key): count for key, count in sorted(Counter(values).items())}
+
+    def average(values):
+        return sum(values) / len(values) if values else 0.0
+
+    if config["use_reranker"]:
+        score_source = f"{config['rerank_model_name']} reranker score"
+    else:
+        score_source = f"{config['retrieval_method']} dense retrieval score"
+
+    summary = {
+        "status": "COMPLETED" if metrics is not None else "PREPARED",
+        "method": "modified_adaptive_k",
+        "implementation": "RACP largest-gap selector",
+        "dataset_name": config["dataset_name"],
+        "split": config["split"],
+        "sample_count": total,
+        "seed": config["seed"],
+        "retrieval": {
+            "retrieval_method": config["retrieval_method"],
+            "retrieval_model_path": config["retrieval_model_path"],
+            "index_path": config["index_path"],
+            "corpus_path": config["corpus_path"],
+            "initial_candidate_topk_config": int(config["retrieval_topk"]),
+            "actual_candidate_count_mean": average(candidate_counts),
+            "actual_candidate_count_distribution": distribution(candidate_counts),
+            "use_reranker": bool(config["use_reranker"]),
+            "score_source": score_source,
+            "retrieval_calls_per_sample": 1,
+        },
+        "adaptive_k": {
+            "selection_method": racp_config.get("selection_method", "gap"),
+            "search_ratio": float(racp_config.get("search_ratio", 0.9)),
+            "buffer": int(racp_config.get("buffer", 5)),
+            "max_k": racp_config.get("max_k"),
+            "mean": average(adaptive_ks),
+            "min": min(adaptive_ks) if adaptive_ks else None,
+            "max": max(adaptive_ks) if adaptive_ks else None,
+            "distribution": distribution(adaptive_ks),
+            "final_document_count_mean": average(final_doc_counts),
+            "final_document_count_distribution": distribution(final_doc_counts),
+        },
+        "generation": {
+            "generator_model": config["generator_model"],
+            "generator_model_path": config["generator_model_path"],
+            "generator_max_input_len": int(config["generator_max_input_len"]),
+            "generation_params": to_jsonable(config["generation_params"]),
+            "llm_calls_per_sample": 1,
+            "refiner_name": config["refiner_name"],
+            "gpu_id": config["gpu_id"],
+            "tensor_parallel_size": int(config["gpu_num"]),
+        },
+        "cache": {
+            "cache_only": bool(racp_config.get("retrieval_cache_only", False)),
+            "source_path": config["retrieval_cache_path"],
+            "cache_affects": "speed_only; cached documents and dense scores are reused unchanged",
+        },
+        "retrieval_recall_semantics": {
+            "configured_metric_label": f"retrieval_recall_top{metric_topk}",
+            "actual_evaluated_document_count_mean": average(evaluated_doc_counts),
+            "actual_evaluated_document_count_distribution": distribution(evaluated_doc_counts),
+            "all_final_documents_evaluated": evaluated_doc_counts == final_doc_counts,
+            "directly_comparable_to_fixed_top10": final_doc_counts
+            == [10 for _ in final_doc_counts],
+            "note": (
+                "The evaluator truncates each final list at the configured metric top-k. "
+                "For max_k=8, all variable-k final documents are evaluated, so the metric "
+                "must be reported as variable-k retrieval recall rather than fixed Recall@10."
+            ),
+        },
+        "metrics": to_jsonable(metrics) if metrics is not None else None,
+    }
+    return summary
+
+
+def log_and_save_racp_statistics(config, dataset, metrics=None):
+    summary = build_racp_experiment_summary(config, dataset, metrics=metrics)
+    adaptive = summary["adaptive_k"]
+    print("Modified Adaptive-k statistics:")
+    print(f"  samples: {summary['sample_count']}")
+    print(f"  mean k: {adaptive['mean']:.4f}")
+    print(f"  min/max k: {adaptive['min']} / {adaptive['max']}")
+    print(f"  k distribution: {adaptive['distribution']}")
+    print(
+        "  retrieval recall semantics: variable final-k; "
+        f"configured label={summary['retrieval_recall_semantics']['configured_metric_label']}"
+    )
+    summary_path = Path(config["save_dir"]) / "adaptive_k_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    execution_history = []
+    if summary_path.exists():
+        try:
+            with summary_path.open("r", encoding="utf-8") as f:
+                execution_history = json.load(f).get("execution_history", [])
+        except (OSError, ValueError, TypeError):
+            execution_history = []
+    try:
+        git_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO_DIR, text=True
+        ).strip()
+        git_status = subprocess.check_output(
+            ["git", "status", "--short"], cwd=REPO_DIR, text=True
+        ).splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        git_commit = "UNKNOWN"
+        git_status = ["UNKNOWN"]
+    stage = "generate" if metrics is not None else "prepare"
+    if "--stage" in sys.argv:
+        stage_index = sys.argv.index("--stage") + 1
+        if stage_index < len(sys.argv):
+            stage = sys.argv[stage_index]
+    execution_history.append(
+        {
+            "stage": stage,
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "command": shlex.join([sys.executable] + sys.argv),
+            "git_commit": git_commit,
+            "git_worktree_dirty": bool(git_status),
+            "git_status": git_status,
+        }
+    )
+    summary["execution_history"] = execution_history
+    with summary_path.open("w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    print(f"Adaptive-k summary saved to: {summary_path}")
+    return summary
+
+
 def load_split(config, split):
     if split is None:
         split = config["split"]
@@ -3565,6 +3769,7 @@ def log_selection_settings(config, retriever):
     print(f"  save_retrieval_cache: {config['save_retrieval_cache']}")
     print(f"  use_retrieval_cache: {config['use_retrieval_cache']}")
     print(f"  retrieval_cache_path: {config['retrieval_cache_path']}")
+    print(f"  retrieval_cache_only: {racp_config.get('retrieval_cache_only', False)}")
     if rs_mhr_config.get("enabled", False):
         print(f"  retrieval_cache_only: {rs_mhr_config.get('retrieval_cache_only', False)}")
 
@@ -3572,6 +3777,7 @@ def log_selection_settings(config, retriever):
 def retrieve_and_prepare(config, dataset, planner_generator=None):
     from flashrag.utils import get_generator, get_retriever
 
+    racp_config = config["racp_config"] or {}
     rs_mhr_config = config["rs_mhr_config"] or {}
     efc_config = config["efc_rag_config"] or {}
     decomposition_config = config["decomposition_config"] or {}
@@ -3591,6 +3797,8 @@ def retrieve_and_prepare(config, dataset, planner_generator=None):
         retriever = RS_MHR_CacheOnlyRetriever(config)
     elif decomposition_config.get("enabled", False) and config["load_retrieval_topk_cache_path"]:
         retriever = QD_CacheOnlyRetriever(config)
+    elif racp_config.get("retrieval_cache_only", False):
+        retriever = RACP_CacheOnlyRetriever(config)
     else:
         retriever = get_retriever(config)
     log_selection_settings(config, retriever)
@@ -3629,7 +3837,7 @@ def retrieve_and_prepare(config, dataset, planner_generator=None):
     adaptive_ks = []
     adaptive_gap_indices = []
     mmr_selected_indices = []
-    racp_config = dict(config["racp_config"] or {})
+    racp_config = dict(racp_config)
     racp_config["_retriever"] = retriever
     racp_config["retrieval_batch_size"] = config["retrieval_batch_size"]
     racp_config["retrieval_method"] = config["retrieval_method"]
@@ -3682,7 +3890,7 @@ def retrieve_and_prepare(config, dataset, planner_generator=None):
 
     dataset = build_final_prompts(config, dataset)
 
-    if config["save_retrieval_cache"]:
+    if config["save_retrieval_cache"] and not getattr(retriever, "cache_only", False):
         retriever._save_cache()
 
     return dataset
@@ -3817,6 +4025,8 @@ def run_prepare(config, args):
         log_efc_statistics(dataset)
     elif config["decomposition_config"]["enabled"]:
         log_query_decomposition_statistics(dataset)
+    elif "experiment_method" in config and config["experiment_method"] == "racp":
+        log_and_save_racp_statistics(config, dataset)
     return dataset
 
 
@@ -3845,6 +4055,8 @@ def run_generate(config, args):
         log_efc_statistics(dataset, include_metrics=True)
     elif config["decomposition_config"]["enabled"]:
         log_query_decomposition_statistics(dataset)
+    elif "experiment_method" in config and config["experiment_method"] == "racp":
+        log_and_save_racp_statistics(config, dataset, metrics=result)
     return dataset
 
 
@@ -3963,6 +4175,8 @@ def run_full(config, args):
         log_efc_statistics(dataset, include_metrics=True)
     elif config["decomposition_config"]["enabled"]:
         log_query_decomposition_statistics(dataset)
+    elif "experiment_method" in config and config["experiment_method"] == "racp":
+        log_and_save_racp_statistics(config, dataset, metrics=result)
     return dataset
 
 
@@ -3996,12 +4210,16 @@ def run(args):
         "generation_guided",
     }:
         raise ValueError(f"--force_route {args.force_route} is not valid for EFC-RAG.")
-    if args.retrieval_cache_only and not (args.enable_rs_mhr or args.enable_efc_rag):
+    if args.retrieval_cache_only and not (
+        args.enable_rs_mhr or args.enable_efc_rag or args.method == "racp"
+    ):
         raise ValueError(
-            "--retrieval_cache_only is supported by --enable_rs_mhr or --enable_efc_rag."
+            "--retrieval_cache_only is supported by RACP, RS-MHR, or EFC-RAG."
         )
     if args.retrieval_cache_only and args.retrieval_cache_path is None:
         raise ValueError("--retrieval_cache_only requires --retrieval_cache_path.")
+    if args.method == "racp" and args.retrieval_cache_only and not args.no_reranker:
+        raise ValueError("RACP --retrieval_cache_only requires --no_reranker.")
     for arg_name in (
         "retrieval_batch_size",
         "planner_batch_size",
