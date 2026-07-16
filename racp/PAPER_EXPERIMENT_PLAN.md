@@ -1,8 +1,9 @@
 # RACP/EFC-RAG 论文实验计划与结果台账
 
-最后更新：2026-07-15
+最后更新：2026-07-16
 W11运行代码基线：`063e29dde59191c2c249ec1bde669834dc3e88ee` + title-dedup-only
 隔离diff（关键四文件hash已归档，本轮文档/代码提交负责将该diff固化到Git历史）
+Modified Adaptive-k 代码基线：`5f13649a4e5dcdf4ccbdcf19f24bd173db46a69b`（clean worktree）
 
 ## 0. 下一轮对话快速交接
 
@@ -51,6 +52,10 @@ reranker 的条件下，自适应证据反馈路由比 Standard RAG、固定 Ful
   diversity是selector的主要收益来源，但仍不能解释全部收益。
 - controlled final top5较完整EFC仅降0.58 F1；matched maximum retrieval budget较IRCoT
   高0.67 F1，但只匹配最大检索预算；w/o redundancy未观察到penalty正收益。
+- Modified Adaptive-k（RACP largest-gap selector）已在三个多跳数据集完成统一全量：平均
+  final K 为6.78/6.77/6.83，相对Standard RAG固定top10减少约32%上下文，但HotpotQA、
+  2Wiki、MuSiQue的F1分别低1.75/0.46/1.08个百分点。该方法不是需要classifier的
+  Adaptive-RAG，二者不得混写。
 
 ### 0.3 下一步正式任务
 
@@ -60,6 +65,7 @@ reranker 的条件下，自适应证据反馈路由比 Standard RAG、固定 Ful
 2. 将W11的`063e29d + title-dedup diff`归档到Git commit，不重跑已验收结果；
 3. 若篇幅需要更完整正交表，再补always-static或w/o title weight；
 4. TRACE和Adaptive-RAG保持暂停，只在明确要求且解决现有阻塞后恢复。
+5. Modified Adaptive-k三项已FINAL；后续只做无需模型调用的统一检索口径重算，不重跑。
 
 任何新对话开始后，应先检查最新输出目录、GPU 进程和 Git 状态，确认没有上一轮已完成
 但尚未登记的正式结果，再决定下一条命令。
@@ -228,10 +234,12 @@ smoke、失败运行和缺少 Retrieval Recall 的输出全部排除，不得与
 | Sampling | 关闭，temperature = 0 |
 | 数据抽样 | 关闭，使用完整 split |
 | 主要指标 | EM、F1 |
-| 辅助指标 | Acc、Precision、Recall、Retrieval Recall@10 |
+| 辅助指标 | Acc、Precision、Recall、方法实际 final-K 下的 Retrieval Recall |
 | 效率指标 | 平均 LLM 调用、平均检索调用、候选池大小、最终文档数、耗时 |
 
 不同算法的 canonical 每轮检索 top-k 可能不同。例如当前 IRCoT 和 IterRetGen 每轮取 5，EFC 从原问题 top20 构造候选池。论文中必须同时披露平均检索调用次数和候选池大小，不能只比较最终 K。
+上表的固定 `K=10` 适用于 Standard RAG、Full-QD 和完整 EFC 等主表方法；Modified
+Adaptive-k 按样本选择6--8篇，必须单独报告实际K分布，不得把其指标写成固定Recall@10。
 
 ### 3.0.1 各方法锁定关键参数
 
@@ -247,6 +255,7 @@ smoke、失败运行和缺少 Retrieval Recall 的输出全部排除，不得与
 | IRCoT | 每轮top5；两轮累积去重，最多10篇 | `max_iter=2` thought；未结束样本追加1次final-answer调用 | 固定IRCoT demonstration；thought/final `max_tokens=32`；no-reranker；正式可用GPU0-3 TP | Recall@10；实际每条最终文档可少于10篇 |
 | EFC-RAG | original top20、probe top5；missing-hop top10或2条QD各top5；final top10 | probe + route-dependent planner + final answer | missing query=1；QD=2；RRF k=60；权重 `1.0/0.30/0.02/0.05/0.01`；soft title dedup；`max_same_title=2`；probe/planner/final max tokens=`128/96/32`；planner batch=32 | Recall@10；同时报告平均LLM/检索调用和候选池 |
 | FLARE | 仅低置信度句子触发BGE top5；final字段为最后一次触发的top5，无触发则空列表 | 最多5轮 | confidence threshold=0.2；look-ahead=64 tokens；总生成上限256；`max_iter=5`；vLLM token logprob；no-reranker | Recall@5；无检索样本计空列表，不得当作缺失数据 |
+| Modified Adaptive-k（RACP gap） | 原问题单次BGE top20候选；按dense score相邻最大gap截断；final K=6--8 | 1次检索 + 1次答案生成；无planner | `selection_method=gap`；`search_ratio=0.9`；`buffer=5`；`max_k=8`；no-reranker；`max_tokens=32` | evaluator键仍名为`retrieval_recall_top10`，但实际评估全部6--8篇；只可写variable-K Retrieval Recall |
 | TRACE | 原问题BGE top5；最终使用5条推理链 | 三元组抽取、链构造、最终生成 | HF framework；exemplars=3；max chain length=4；triple select top5；choices=20；min triple prob=1e-4；beams=5；candidate chains=20；`n_context=5`；context=`triples` | Recall@5；必须同时报告耗时 |
 | Adaptive-RAG | classifier路由为No-RAG/单次RAG/IRCoT；检索分支top5 | multi-hop `max_iter=2` | classifier batch=16；必须显式提供并审计本地checkpoint；no-reranker | 当前暂停，无合法FINAL |
 
@@ -620,6 +629,7 @@ rg -n 'Traceback|RuntimeError|CUDA out of memory| failed at ' racp/output/<FINAL
 | FLARE | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
 | TRACE | `PAUSED` | `PAUSED` | `FAILED` | `N/A` |
 | Adaptive-RAG | `TODO` | `TODO` | `TODO` | `TODO` |
+| Modified Adaptive-k | `FINAL` | `FINAL` | `FINAL` | `N/A` |
 | EFC-RAG | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
 
 NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳任务的额外成本时加入补充表。
@@ -637,6 +647,7 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | `HP-NR-07` | HotpotQA | EFC-RAG | `FINAL` | 完整方法，final context K=10 |
 | `HP-NR-08` | HotpotQA | FLARE | `FINAL` | GPU 0；每次检索 top5，固定五轮；全量耗时4:49:24 |
 | `HP-NR-09` | HotpotQA | TRACE | `PAUSED` | 2026-07-15按用户指令停止；无可登记指标；完整`save_triples.json`已保留，恢复时用新目录重跑reasoning chain |
+| `HP-NR-10` | HotpotQA | Modified Adaptive-k | `FINAL` | largest-gap；top20候选；final K=6--8；平均K=6.7837 |
 | `2W-NR-01` | 2Wiki | No-RAG | `FINAL` | 闭卷下界；`zero-shot` / `naive_run()` |
 | `2W-NR-02` | 2Wiki | Standard RAG | `FINAL` | `naive` CLI；统一 no-refiner、no-reranker、top10 全量结果 |
 | `2W-NR-03` | 2Wiki | IterRetGen | `FINAL` | 原生三轮主干基线，每轮 top5 |
@@ -646,6 +657,7 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | `2W-NR-07` | 2Wiki | EFC-RAG | `FINAL` | 完整方法，final context K=10 |
 | `2W-NR-08` | 2Wiki | FLARE | `FINAL` | 主动检索基线；每次检索top5、固定五轮；全量耗时6:12:41 |
 | `2W-NR-09` | 2Wiki | TRACE | `PAUSED` | 2026-07-15按用户指令停止；尚未生成`save_triples.json`且无可登记指标，恢复时需从triple extraction重跑 |
+| `2W-NR-10` | 2Wiki | Modified Adaptive-k | `FINAL` | largest-gap；top20候选；final K=6--8；平均K=6.7706 |
 | `MU-NR-01` | MuSiQue | No-RAG | `FINAL` | 闭卷下界；不加载 retriever，与 2Wiki Full-QD 并行完成 |
 | `MU-NR-02` | MuSiQue | Standard RAG | `FINAL` | no-refiner、no-reranker、top10；完整 dev 2,417 条 |
 | `MU-NR-03` | MuSiQue | IterRetGen | `FINAL` | 原生三轮、每轮 top5；完整 dev 2,417 条 |
@@ -655,6 +667,7 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | `MU-NR-07` | MuSiQue | EFC-RAG | `FINAL` | final top10；完整 dev 2,417 条 |
 | `MU-NR-08` | MuSiQue | FLARE | `FINAL` | 完整dev 2,417条；top5、固定五轮；327条触发检索 |
 | `MU-NR-09` | MuSiQue | TRACE | `FAILED` | 全量在796/2,417（`dev_796`）处因空path query触发`np.concatenate([])`异常；无metric/intermediate/prediction，不登记分数；完整triple缓存可复用，修复后新目录重跑 |
+| `MU-NR-10` | MuSiQue | Modified Adaptive-k | `FINAL` | largest-gap；top20候选；final K=6--8；平均K=6.8324 |
 | `NQ-NR-01` | NQ | No-RAG | `FINAL` | 单跳闭卷下界；完整 test 3,610 条 |
 | `NQ-NR-02` | NQ | Standard RAG | `FINAL` | cache-hit top10、no-reranker；完整test 3,610条 |
 | `NQ-NR-03` | NQ | IterRetGen | `FINAL` | 完整test 3,610条；原生三轮、每轮top5、最终列表5篇 |
@@ -677,6 +690,7 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | `HP-NR-05` | IRCoT | **36.26** | **47.50** | 39.57 | **51.40** | 46.93 | 64.77 (@10) |
 | `HP-NR-07` | EFC-RAG | 35.85 | 47.21 | **42.35** | 48.89 | **49.43** | **71.51 (@10)** |
 | `HP-NR-08` | FLARE | 16.04 | 23.26 | 21.27 | 23.88 | 26.54 | 1.93 (@5) |
+| `HP-NR-10` | Modified Adaptive-k | 31.99 | 43.07 | 38.99 | 44.48 | 45.97 | 60.93 (variable K=6--8) |
 
 最终结果目录：
 
@@ -689,6 +703,7 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | `HP-NR-05` | [`output/hotpotqa_2026_07_09_14_27_ircot-no-rerank-cache-full`](output/hotpotqa_2026_07_09_14_27_ircot-no-rerank-cache-full) |
 | `HP-NR-07` | [`output/hotpotqa_2026_07_09_15_52_efc-static-bridge-final-top10-full`](output/hotpotqa_2026_07_09_15_52_efc-static-bridge-final-top10-full) |
 | `HP-NR-08` | [`output/hotpotqa_2026_07_13_09_22_hotpotqa-flare-no-rerank-top5-full-v2`](output/hotpotqa_2026_07_13_09_22_hotpotqa-flare-no-rerank-top5-full-v2) |
+| `HP-NR-10` | [`output/hotpotqa_2026_07_16_17_35_hotpotqa-modified-adaptive-k-gap-b5-max8-no-rerank-full`](output/hotpotqa_2026_07_16_17_35_hotpotqa-modified-adaptive-k-gap-b5-max8-no-rerank-full) |
 
 FLARE 使用完整 dev 7,405 条样本，`test_sample_num: null`、`refiner_name: null`、
 `use_reranker: false`、`do_sample: false`。锁定参数为 threshold=0.2、look-ahead=64、
@@ -723,6 +738,7 @@ FLARE 使用完整 dev 7,405 条样本，`test_sample_num: null`、`refiner_name
 | `2W-NR-05` | IRCoT | **33.07** | **39.39** | **35.46** | **40.99** | **39.41** | 50.15 (@10) |
 | `2W-NR-07` | EFC-RAG | 20.35 | 29.37 | 28.92 | 29.04 | 33.98 | **58.17 (@10)** |
 | `2W-NR-08` | FLARE | 9.37 | 20.45 | 32.11 | 17.51 | 36.22 | 2.27 (@5) |
+| `2W-NR-10` | Modified Adaptive-k | 15.18 | 25.14 | 27.87 | 24.25 | 32.74 | 42.22 (variable K=6--8) |
 
 最终结果目录：
 
@@ -735,6 +751,7 @@ FLARE 使用完整 dev 7,405 条样本，`test_sample_num: null`、`refiner_name
 | `2W-NR-05` | [`output/2wikimultihopqa_2026_07_12_17_09_2wiki-ircot-no-rerank-cache-full-v2`](output/2wikimultihopqa_2026_07_12_17_09_2wiki-ircot-no-rerank-cache-full-v2) | `3b4d780` + 未提交兼容性 diff |
 | `2W-NR-07` | [`output/2wikimultihopqa_2026_07_12_11_11_2wiki-efc-no-rerank-top10-full`](output/2wikimultihopqa_2026_07_12_11_11_2wiki-efc-no-rerank-top10-full) | `3e62049` |
 | `2W-NR-08` | [`output/2wikimultihopqa_2026_07_13_14_26_2wiki-flare-no-rerank-top5-full`](output/2wikimultihopqa_2026_07_13_14_26_2wiki-flare-no-rerank-top5-full) | `3b4d780` + 未提交兼容性 diff |
+| `2W-NR-10` | [`output/2wikimultihopqa_2026_07_16_17_35_2wiki-modified-adaptive-k-gap-b5-max8-no-rerank-full`](output/2wikimultihopqa_2026_07_16_17_35_2wiki-modified-adaptive-k-gap-b5-max8-no-rerank-full) | `5f13649`（clean） |
 
 该运行使用完整 dev 12,576 条样本；每条最终使用 10 篇文档，`refiner_name: null`、
 `use_reranker: false`、`do_sample: false`。`racp/run_exp.py` 未生成 `run.log`，但
@@ -831,6 +848,7 @@ retrieval recall。任何修改必须先在 HotpotQA/MuSiQue 上确定并冻结�
 | `MU-NR-05` | IRCoT | **10.38** | 17.42 | 12.00 | **19.40** | 17.40 | 30.33 (@10) |
 | `MU-NR-07` | EFC-RAG | 9.93 | **17.65** | **13.24** | 18.31 | **19.21** | **42.08 (@10)** |
 | `MU-NR-08` | FLARE | 2.15 | 5.42 | 3.89 | 5.75 | 6.68 | 1.32 (@5) |
+| `MU-NR-10` | Modified Adaptive-k | 6.16 | 13.03 | 8.69 | 13.62 | 14.70 | 28.13 (variable K=6--8) |
 
 最终结果目录：
 
@@ -843,6 +861,7 @@ retrieval recall。任何修改必须先在 HotpotQA/MuSiQue 上确定并冻结�
 | `MU-NR-05` | [`output/musique_2026_07_12_22_30_musique-ircot-no-rerank-cache-full`](output/musique_2026_07_12_22_30_musique-ircot-no-rerank-cache-full) | `3b4d780` + 未提交兼容性 diff |
 | `MU-NR-07` | [`output/musique_2026_07_12_20_15_musique-efc-no-rerank-top10-prepare`](output/musique_2026_07_12_20_15_musique-efc-no-rerank-top10-prepare) | `3b4d780` + 未提交兼容性 diff |
 | `MU-NR-08` | [`output/musique_2026_07_14_09_25_musique-flare-no-rerank-top5-full`](output/musique_2026_07_14_09_25_musique-flare-no-rerank-top5-full) | `3b4d780` + 未提交兼容性 diff |
+| `MU-NR-10` | [`output/musique_2026_07_16_17_35_musique-modified-adaptive-k-gap-b5-max8-no-rerank-full`](output/musique_2026_07_16_17_35_musique-modified-adaptive-k-gap-b5-max8-no-rerank-full) | `5f13649`（clean） |
 
 该运行使用完整 dev 2,417 条样本，预测覆盖 2,417/2,417，`refiner_name: null`、
 `do_sample: false`，且没有 `retrieval_result`。基础配置中的 `use_reranker: true` 对
@@ -873,6 +892,41 @@ FLARE 覆盖完整dev 2,417条，threshold=0.2、look-ahead=64、总生成上限
 动态检索top5。327条样本至少触发一次检索，2,090条从未触发，共340次动态检索；最终
 `retrieval_result` 分别为5篇或合法空列表。总耗时1:23:27，完整日志和命令已归档，
 无Traceback、RuntimeError或OOM。
+
+### 5.5.1 Modified Adaptive-k 统一对照
+
+该对照复用 `run_racp.py` 中修改后的 RACP largest-gap selector，不是 Adaptive-RAG：它不
+使用 classifier，也不路由到 No-RAG/Standard RAG/IRCoT。每条问题只执行一次原问题检索和
+一次最终答案生成。BGE 返回20篇带原始dense score的候选，按分数降序后只在前
+`ceil(20×0.9)=18`篇的相邻分差中找最大gap，并取
+`K=min(gap_index+1+buffer, max_k)`；本轮 `buffer=5`、`max_k=8`，所以实际K为6--8。
+
+共同设置：完整dev split、seed=2024、`Llama-3.1-8B-Instruct`、输入上限4096、
+`max_tokens=32`、`do_sample=false`、`bge-large-en-v1.5`、`wiki18_100w` Flat index、
+无reranker、无refiner、单卡vLLM、tensor parallel size=1。prepare阶段从已审计的原问题
+top20公共cache读取文档和原始dense score，cache只省去重复检索，不改变选择或预测结果。
+每个FINAL的 `adaptive_k_summary.json` 保存了实际命令、配置、Git状态、K分布和指标。
+代码模板与落盘prompt抽查确认，其final-answer system/user prompt和短答案要求与现有
+Standard RAG一致；两者的实验变量是final context从固定top10变为score-gap选择的6--8篇。
+
+| ID | 样本数 | GPU | 平均K | K=6 / 7 / 8 | 活跃耗时（prepare + generate） | 相对Standard top10的文档减少 |
+|---|---:|---:|---:|---:|---:|---:|
+| `HP-NR-10` | 7,405 | 1 | 6.7837 | 3,541 / 1,925 / 1,939 | 15:53（50s + 15:03） | 32.16% |
+| `2W-NR-10` | 12,576 | 2 | 6.7706 | 6,193 / 3,075 / 3,308 | 28:25（1:25 + 27:00） | 32.29% |
+| `MU-NR-10` | 2,417 | 3 | 6.8324 | 1,158 / 506 / 753 | 5:29（16s + 5:13） | 31.68% |
+
+| 数据集 | Adaptive-k EM / F1 | Standard RAG EM / F1 | ΔEM / ΔF1 | Adaptive variable-K Retrieval Recall | Standard Recall@10 |
+|---|---:|---:|---:|---:|---:|
+| HotpotQA | 31.99 / 43.07 | 33.57 / 44.82 | -1.58 / -1.75 | 60.93 | 65.12 |
+| 2Wiki | 15.18 / 25.14 | 16.56 / 25.60 | -1.38 / -0.46 | 42.22 | 46.20 |
+| MuSiQue | 6.16 / 13.03 | 6.45 / 14.11 | -0.29 / -1.08 | 28.13 | 32.02 |
+
+三个任务都完整退出，未发生异常、续跑或结果合并；运行commit均为clean
+`5f13649a4e5dcdf4ccbdcf19f24bd173db46a69b`。评测器沿用配置键
+`retrieval_recall_top10`，但因为最大K只有8，它实际评估每条样本的全部6--8篇文档。
+论文必须写作“variable-K Retrieval Recall”，不能与固定Recall@10无注释直接排序。
+结果表明该设置以约32%的上下文压缩换来0.46--1.75 F1点下降，适合作为质量—上下文预算
+对照，不能宣称优于Standard RAG。
 
 ### 5.6 NQ 主结果
 
@@ -1091,6 +1145,8 @@ W11四项均使用commit `063e29d`加运行时未提交的title-dedup隔离diff�
 - W11四项`HP-AB-10/11/12/13`均已结束并通过FINAL验收。只有matched maximum budget
   运行发生4条online cache miss并写入独立cache，其余三项完整EFC cache-only；当前无
   W11 Python进程或tmux会话。
+- W12 Modified Adaptive-k三项`HP-NR-10/2W-NR-10/MU-NR-10`均已完成并通过FINAL
+  验收；三项并行复用只读原问题top20 cache，生成分别使用GPU1/2/3，当前进程均已退出。
 - `2W-NR-04` Full-QD、`2W-NR-05` IRCoT 和 `MU-NR-01` No-RAG 已完成并登记 FINAL。
 - MuSiQue 公共缓存链接：
   `output/cache/musique_dev_bge_large_no_rerank_top20_retrieval_cache.json`。
@@ -1111,6 +1167,7 @@ W11四项均使用commit `063e29d`加运行时未提交的title-dedup隔离diff�
 | W9（完成） | GPU1重跑HotpotQA w/o static-QD并在线补齐动态query | GPU0 w/o role、GPU3 w/o original seed、GPU4 w/o source均cache-only | `HP-AB-04/06/07/08`均FINAL |
 | W10（完成） | 无新增检索；复用完整HotpotQA EFC cache | GPU0 HotpotQA RRF-only selector，单卡cache-only | `HP-AB-09`已FINAL |
 | W11（完成） | GPU3 matched maximum retrieval budget，4条新query写独立cache | GPU0 title-dedup-only、GPU1 final top5、GPU4 w/o redundancy均cache-only | `HP-AB-10/11/12/13`均FINAL |
+| W12（完成） | 无online检索；三个数据集均复用原问题top20只读cache | GPU1/2/3并行运行Modified Adaptive-k prepare/generate | `HP-NR-10/2W-NR-10/MU-NR-10`均FINAL |
 
 默认仍只安排一个会高频搜索Flat index的任务。W11已结束，当前没有这四项
 消融对应的Python进程或tmux会话。增加任务前仍需检查GPU/CPU/NUMA资源，并继续
@@ -1164,6 +1221,7 @@ W11四项均使用commit `063e29d`加运行时未提交的title-dedup隔离diff�
 
 | 日期 | 更新内容 |
 |---|---|
+| 2026-07-16 | 验收并登记三个多跳数据集的Modified Adaptive-k（largest-gap）FINAL：统一top20候选、`search_ratio=0.9`、`buffer=5`、`max_k=8`，实际K=6--8；HotpotQA/2Wiki/MuSiQue的EM/F1为31.99/43.07、15.18/25.14、6.16/13.03，平均K为6.7837/6.7706/6.8324。三项均为clean commit `5f13649`、完整split、cache只影响速度、无异常/续跑/合并；明确其检索指标是variable-K而非固定Recall@10，并与需要classifier的Adaptive-RAG区分。 |
 | 2026-07-15 | 验收并登记W11四项HotpotQA消融FINAL：`HP-AB-10` title-dedup-only为35.18/46.57/70.90@10，`HP-AB-11` controlled final top5为35.53/46.63/66.31@5，`HP-AB-12` matched maximum retrieval budget为36.66/48.17/69.82@≤10，`HP-AB-13` w/o redundancy为36.04/47.46/72.21@10（EM/F1/answer-hit）；四项均完整7,405条、无异常或缺失预测。AB12只匹配最大检索预算而非完整计算预算；AB13未观察到冗余惩罚正收益。运行代码为`063e29d`加已识别diff，提交后无需重跑。 |
 | 2026-07-15 | 启动W11四项HotpotQA扩展消融：GPU0/tmux `racp_hp_ab10_0715`运行title-dedup-only，GPU1/tmux `racp_hp_ab11_0715`运行受控final top5，GPU3/tmux `racp_hp_ab12_0715`运行IRCoT-matched retrieval budget（预锁定最多2次逻辑查询、10篇raw文档、final K≤10），GPU4/tmux `racp_hp_ab13_0715`运行w/o redundancy；仅matched-budget允许在线补cache且只写独立输出，其余cache-only；title-dedup-only为默认关闭的新隔离开关，34/34直接回归测试通过 |
 | 2026-07-15 | 审计并登记HotpotQA RRF-only selector `HP-AB-09` FINAL：完整7,405条，EM/F1/Retrieval Recall@10为33.30/43.67/67.13，总耗时55:09；相对完整EFC低2.55/3.54/4.38个百分点，support-title recall和双支持命中分别从68.11%/51.24%降至47.45%/22.96%，证明组合selector整体有效但不能把全部增益归因于单一权重 |

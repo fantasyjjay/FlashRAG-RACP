@@ -1,16 +1,17 @@
 # RACP / EFC-RAG 已完成实验结果与论文写作参考
 
-更新时间：2026-07-15
+更新时间：2026-07-16
 
 > 本文是论文写作参考摘要，不替代唯一正式实验台账
 > [`PAPER_EXPERIMENT_PLAN.md`](PAPER_EXPERIMENT_PLAN.md)。本文只收录台账中状态为
 > `FINAL` 的全量实验，不收录 smoke、失败运行、暂停的 TRACE、运行中的消融或暂停的
-> Adaptive-RAG。最终引用数值前仍应以对应 FINAL 目录的 `metric_score.txt` 和
+> Adaptive-RAG。Modified Adaptive-k 是独立的largest-gap对照，不是官方Adaptive-RAG。
+> 最终引用数值前仍应以对应 FINAL 目录的 `metric_score.txt` 和
 > `config.yaml` 为准。
 
 ## 1. 实验范围与完成情况
 
-当前共有 26 项主结果通过全量、配置、样本覆盖和日志审计：
+当前共有 29 项主结果通过全量、配置、样本覆盖和日志审计：
 
 | 方法 | HotpotQA | 2WikiMultiHopQA | MuSiQue | NQ |
 |---|---|---|---|---|
@@ -21,6 +22,7 @@
 | IRCoT | FINAL | FINAL | FINAL | N/A |
 | EFC-RAG | FINAL | FINAL | FINAL | FINAL |
 | FLARE | FINAL | FINAL | FINAL | FINAL |
+| Modified Adaptive-k | FINAL | FINAL | FINAL | N/A |
 
 暂不进入本文结果表：
 
@@ -92,6 +94,10 @@ No-RAG 使用 `NoOpRetriever`，不执行检索或 rerank。MuSiQue No-RAG 的�
 运行分别来自 `e6b4456` 或 `3e62049`。兼容性修改主要修复 FLARE token logprob、动态
 cache-miss 返回维度和评测字段，不应在论文中描述为 EFC 算法改进。
 
+Modified Adaptive-k 三项运行单独锁定在 clean commit
+`5f13649a4e5dcdf4ccbdcf19f24bd173db46a69b`；每个FINAL目录的
+`adaptive_k_summary.json` 保存实际命令、Git状态、K分布、缓存来源和指标。
+
 因此本文结果属于“统一模型、统一 retriever、无 reranker 条件下的受控比较”，不是对各篇
 原论文 headline number 的逐项复刻。提交论文或发布代码前，应将当前工作区固定为一个明确
 commit，并为所有 FINAL 目录保留对应配置与命令。
@@ -118,6 +124,7 @@ commit，并为所有 FINAL 目录保留对应配置与命令。
 | IRCoT | 每轮 top5；两轮累积去重，最终最多10篇 | 2 轮 thought；未结束样本追加 final answer | `max_iter=2`、固定 demonstration、thought/final各32 tokens | 配置 @10；实际最终可少于10篇 |
 | EFC-RAG | original top20、probe top5；扩展检索；final top10 | probe + 路由相关 planner + final answer | 见下节 | @10 |
 | FLARE | 低置信度句子触发 BGE top5；未触发则最终列表为空 | 最多5轮 | threshold=0.2、look-ahead=64、总生成上限256、`max_iter=5` | @5；未触发样本按零召回计入 |
+| Modified Adaptive-k | 原问题BGE top20；按raw dense score最大相邻gap选择final K=6--8 | 1次检索 + 1次答案生成，无planner | `selection_method=gap`、`search_ratio=0.9`、`buffer=5`、`max_k=8` | variable K；配置键虽名为@10，实际评估全部6--8篇，不可直接当固定Recall@10 |
 
 ### 4.3 EFC-RAG 完整参数
 
@@ -184,6 +191,7 @@ question
 | IRCoT | **36.26** | **47.50** | 39.57 | **51.40** | 46.93 | 64.77 (@10) |
 | EFC-RAG | 35.85 | 47.21 | **42.35** | 48.89 | **49.43** | **71.51 (@10)** |
 | FLARE | 16.04 | 23.26 | 21.27 | 23.88 | 26.54 | 1.93 (@5) |
+| Modified Adaptive-k | 31.99 | 43.07 | 38.99 | 44.48 | 45.97 | 60.93 (variable K=6--8) |
 
 EFC-RAG 相比 Standard RAG 提升 2.28 EM、2.39 F1 和 6.39 Retrieval Recall；相比
 IterRetGen 提升 1.18 EM、1.55 F1 和 8.65 Retrieval Recall。IRCoT 的 EM/F1 比 EFC
@@ -200,6 +208,7 @@ IterRetGen 提升 1.18 EM、1.55 F1 和 8.65 Retrieval Recall。IRCoT 的 EM/F1 
 | IRCoT | **33.07** | **39.39** | **35.46** | **40.99** | **39.41** | 50.15 (@10) |
 | EFC-RAG | 20.35 | 29.37 | 28.92 | 29.04 | 33.98 | **58.17 (@10)** |
 | FLARE | 9.37 | 20.45 | 32.11 | 17.51 | 36.22 | 2.27 (@5) |
+| Modified Adaptive-k | 15.18 | 25.14 | 27.87 | 24.25 | 32.74 | 42.22 (variable K=6--8) |
 
 EFC-RAG 相比 Standard RAG 提升 3.79 EM、3.77 F1 和 11.97 Retrieval Recall；相比
 IterRetGen 提升 3.45 EM、2.78 F1 和 15.69 Retrieval Recall；相比 Full-QD 提升
@@ -220,11 +229,32 @@ Full-QD，同时取得最高 Retrieval Recall，但答案指标低于 IRCoT。
 | IRCoT | **10.38** | 17.42 | 12.00 | **19.40** | 17.40 | 30.33 (@10) |
 | EFC-RAG | 9.93 | **17.65** | **13.24** | 18.31 | **19.21** | **42.08 (@10)** |
 | FLARE | 2.15 | 5.42 | 3.89 | 5.75 | 6.68 | 1.32 (@5) |
+| Modified Adaptive-k | 6.16 | 13.03 | 8.69 | 13.62 | 14.70 | 28.13 (variable K=6--8) |
 
 EFC-RAG 相比 Standard RAG 提升 3.48 EM、3.54 F1 和 10.06 Retrieval Recall；相比
 IterRetGen 提升 1.86 EM、2.43 F1 和 12.50 Retrieval Recall；相比 Full-QD 提升
 2.32 EM 和 2.23 F1。与 IRCoT 相比，EFC 的 EM 低 0.45，但 F1 高 0.23，Retrieval
 Recall 高 11.75。
+
+### 5.3.1 Modified Adaptive-k 三数据集对照
+
+三个FINAL使用相同设置：原问题BGE top20候选；在前90%排序候选内寻找最大相邻dense
+score gap；`buffer=5`、`max_k=8`，因此final K为6--8；seed=2024；
+Llama-3.1-8B-Instruct；`max_tokens=32`；无sampling、reranker、refiner或planner。每条样本
+只有1次检索和1次答案生成。prepare复用只读top20 cache，cache中的文档和raw dense score
+原样参与选择，只影响速度。运行均为单卡、TP=1、clean commit `5f13649`。
+代码模板与落盘prompt核对确认，final-answer prompt和短答案要求与Standard RAG一致；
+主要受控变量是final context从固定top10变为按score gap选择的6--8篇。
+
+| 数据集 | 平均K | K=6 / 7 / 8 | 相对top10文档减少 | ΔEM / ΔF1 vs Standard | 活跃耗时 |
+|---|---:|---:|---:|---:|---:|
+| HotpotQA | 6.7837 | 3,541 / 1,925 / 1,939 | 32.16% | -1.58 / -1.75 | 15:53 |
+| 2Wiki | 6.7706 | 6,193 / 3,075 / 3,308 | 32.29% | -1.38 / -0.46 | 28:25 |
+| MuSiQue | 6.8324 | 1,158 / 506 / 753 | 31.68% | -0.29 / -1.08 | 5:29 |
+
+三个数据集都以约32%的最终上下文压缩换来小幅答案质量下降。表中的检索指标必须称为
+variable-K Retrieval Recall：现有evaluator字段虽然名为`retrieval_recall_top10`，实际因
+最大K=8而评估全部6--8篇，不能无注释地视为固定Recall@10。
 
 ### 5.4 Natural Questions test（3,610）
 
@@ -351,6 +381,8 @@ HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有�
    主要原因之一是多数样本没有触发动态检索。
 8. **消融支持自适应扩展。** HotpotQA direct-only明显低于完整EFC；MuSiQue固定走
    generation-guided也略低于完整EFC，说明router带来稳定但数据集相关的收益。
+9. **Modified Adaptive-k提供上下文压缩，而非质量提升。** largest-gap设置在三个多跳
+   数据集将平均K降至约6.8，但F1相对Standard RAG分别下降1.75、0.46和1.08个百分点。
 
 ## 10. 建议的论文表述
 
@@ -371,6 +403,8 @@ HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有�
 - “EFC direct 等于单次 Standard RAG 成本”——direct 仍执行 probe 和 final generation。
 - “IterRetGen Retrieval Recall@10”而不解释——当前最终列表实际只有第三轮5篇。
 - 把 FLARE Recall@5 与其他方法 Recall@10 当作相同预算直接排序。
+- 把 Modified Adaptive-k 的variable-K recall写成固定Recall@10，或把它与需要classifier
+  的Adaptive-RAG视为同一个方法。
 
 ## 11. FINAL 结果来源
 
@@ -385,6 +419,7 @@ HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有�
 | HP-NR-05 | IRCoT | [`output/hotpotqa_2026_07_09_14_27_ircot-no-rerank-cache-full`](output/hotpotqa_2026_07_09_14_27_ircot-no-rerank-cache-full) |
 | HP-NR-07 | EFC-RAG | [`output/hotpotqa_2026_07_09_15_52_efc-static-bridge-final-top10-full`](output/hotpotqa_2026_07_09_15_52_efc-static-bridge-final-top10-full) |
 | HP-NR-08 | FLARE | [`output/hotpotqa_2026_07_13_09_22_hotpotqa-flare-no-rerank-top5-full-v2`](output/hotpotqa_2026_07_13_09_22_hotpotqa-flare-no-rerank-top5-full-v2) |
+| HP-NR-10 | Modified Adaptive-k | [`output/hotpotqa_2026_07_16_17_35_hotpotqa-modified-adaptive-k-gap-b5-max8-no-rerank-full`](output/hotpotqa_2026_07_16_17_35_hotpotqa-modified-adaptive-k-gap-b5-max8-no-rerank-full) |
 | HP-AB-02 | direct-only | [`output/hotpotqa_2026_07_15_10_01_hotpotqa-efc-force-direct-top10-full`](output/hotpotqa_2026_07_15_10_01_hotpotqa-efc-force-direct-top10-full) |
 | HP-AB-03 | generation-guided-only | [`output/hotpotqa_2026_07_14_13_49_hotpotqa-efc-force-generation-guided-no-static-top10-full`](output/hotpotqa_2026_07_14_13_49_hotpotqa-efc-force-generation-guided-no-static-top10-full) |
 | HP-AB-04 | w/o static-QD | [`output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-auto-no-static-top10-full-v3-online-fill`](output/hotpotqa_2026_07_15_11_05_hotpotqa-efc-auto-no-static-top10-full-v3-online-fill) |
@@ -408,6 +443,7 @@ HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有�
 | 2W-NR-05 | IRCoT | [`output/2wikimultihopqa_2026_07_12_17_09_2wiki-ircot-no-rerank-cache-full-v2`](output/2wikimultihopqa_2026_07_12_17_09_2wiki-ircot-no-rerank-cache-full-v2) |
 | 2W-NR-07 | EFC-RAG | [`output/2wikimultihopqa_2026_07_12_11_11_2wiki-efc-no-rerank-top10-full`](output/2wikimultihopqa_2026_07_12_11_11_2wiki-efc-no-rerank-top10-full) |
 | 2W-NR-08 | FLARE | [`output/2wikimultihopqa_2026_07_13_14_26_2wiki-flare-no-rerank-top5-full`](output/2wikimultihopqa_2026_07_13_14_26_2wiki-flare-no-rerank-top5-full) |
+| 2W-NR-10 | Modified Adaptive-k | [`output/2wikimultihopqa_2026_07_16_17_35_2wiki-modified-adaptive-k-gap-b5-max8-no-rerank-full`](output/2wikimultihopqa_2026_07_16_17_35_2wiki-modified-adaptive-k-gap-b5-max8-no-rerank-full) |
 
 ### MuSiQue
 
@@ -420,6 +456,7 @@ HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有�
 | MU-NR-05 | IRCoT | [`output/musique_2026_07_12_22_30_musique-ircot-no-rerank-cache-full`](output/musique_2026_07_12_22_30_musique-ircot-no-rerank-cache-full) |
 | MU-NR-07 | EFC-RAG | [`output/musique_2026_07_12_20_15_musique-efc-no-rerank-top10-prepare`](output/musique_2026_07_12_20_15_musique-efc-no-rerank-top10-prepare) |
 | MU-NR-08 | FLARE | [`output/musique_2026_07_14_09_25_musique-flare-no-rerank-top5-full`](output/musique_2026_07_14_09_25_musique-flare-no-rerank-top5-full) |
+| MU-NR-10 | Modified Adaptive-k | [`output/musique_2026_07_16_17_35_musique-modified-adaptive-k-gap-b5-max8-no-rerank-full`](output/musique_2026_07_16_17_35_musique-modified-adaptive-k-gap-b5-max8-no-rerank-full) |
 | MU-AB-02 | generation-guided-only | [`output/musique_2026_07_15_10_01_musique-efc-force-generation-guided-no-static-top10-full`](output/musique_2026_07_15_10_01_musique-efc-force-generation-guided-no-static-top10-full) |
 
 ### Natural Questions
