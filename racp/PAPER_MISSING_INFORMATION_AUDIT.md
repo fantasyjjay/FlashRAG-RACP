@@ -1,12 +1,17 @@
 # RACP / EFC-RAG 论文缺失信息只读审计
 
-审计时间：2026-07-14（Asia/Shanghai）
-审计范围：`PAPER_RESULTS_REFERENCE.md` 中的 26 个 FINAL 主实验、`PAPER_EXPERIMENT_PLAN.md`、全部相关输出、当前代码与 Git 历史。
+审计时间：2026-08-13（Asia/Hong_Kong）
+审计范围：既有 26 个 FINAL 主实验、3 个已有 Modified Adaptive-k FINAL、最新 Table 5
+的 32 项主结果、`PAPER_EXPERIMENT_PLAN.md`、全部相关输出、当前代码与 Git 历史。
 审计约束：本次没有修改实验代码、删除文件、停止或启动实验，也没有重新调用生成模型或检索器；只新增本报告。
 
 > **2026-07-15 补充审计：** HotpotQA `HP-AB-02/03/04/06/07/08/09/10/11/12/13`
 > 已按同一验收清单登记为 FINAL。本文第七节、最终缺口分类和优先级已同步更新；
 > 文末“当前现场快照”仍保留2026-07-14原始审计现场，不应解读为当前进程状态。
+
+> **2026-08-13 数据同步：** Table 5 新增 NQ Full-QD 34.88/47.07、IRCoT
+> 39.31/49.53、Modified Adaptive-k 36.43/48.90，并将 EFC-RAG 更新为 38.32/50.44。
+> 这些新增/更新数值的实验 ID、FINAL 目录、commit、逐样本预测和成本仍为 `UNKNOWN`。
 
 ## 审计口径与最重要结论
 
@@ -53,6 +58,9 @@
 | NQ-NR-01 | NQ test | No-RAG | [D](output/nq_2026_07_12_19_21_nq-zero-shot-full/) | 3,610 / 完整 | [config](output/nq_2026_07_12_19_21_nq-zero-shot-full/config.yaml) / [metric](output/nq_2026_07_12_19_21_nq-zero-shot-full/metric_score.txt) | `UNKNOWN` |
 | NQ-NR-02 | NQ test | Standard RAG | [D](output/nq_2026_07_14_09_54_nq-standard-rag-no-rerank-top10-full/) | 3,610 / 完整 | [config](output/nq_2026_07_14_09_54_nq-standard-rag-no-rerank-top10-full/config.yaml) / [metric](output/nq_2026_07_14_09_54_nq-standard-rag-no-rerank-top10-full/metric_score.txt) | [C4](output/nq_2026_07_14_09_54_nq-standard-rag-no-rerank-top10-full/run_command.txt) |
 | NQ-NR-03 | NQ test | IterRetGen | [D](output/nq_2026_07_14_10_36_nq-iterretgen-no-rerank-full/) | 3,610 / 完整 | [config](output/nq_2026_07_14_10_36_nq-iterretgen-no-rerank-full/config.yaml) / [metric](output/nq_2026_07_14_10_36_nq-iterretgen-no-rerank-full/metric_score.txt) | [C5](output/nq_2026_07_14_10_36_nq-iterretgen-no-rerank-full/run_command.txt) |
+| 待补 | NQ test | Full-QD | `UNKNOWN` | `UNKNOWN` | Table 5: 34.88 / 47.07 | `UNKNOWN` |
+| 待补 | NQ test | IRCoT | `UNKNOWN` | `UNKNOWN` | Table 5: 39.31 / 49.53 | `UNKNOWN` |
+| 待补 | NQ test | Modified Adaptive-k | `UNKNOWN` | `UNKNOWN` | Table 5: 36.43 / 48.90 | `UNKNOWN` |
 | NQ-NR-05 | NQ test | EFC-RAG | [D](output/nq_2026_07_14_09_54_nq-efc-no-rerank-top10-full/) | 3,610 / 完整 | [config](output/nq_2026_07_14_09_54_nq-efc-no-rerank-top10-full/config.yaml) / [metric](output/nq_2026_07_14_09_54_nq-efc-no-rerank-top10-full/metric_score.txt) | [C6](output/nq_2026_07_14_09_54_nq-efc-no-rerank-top10-full/run_command.txt) |
 | NQ-NR-06 | NQ test | FLARE | [D](output/nq_2026_07_14_10_36_nq-flare-no-rerank-top5-full/) | 3,610 / 完整 | [config](output/nq_2026_07_14_10_36_nq-flare-no-rerank-top5-full/config.yaml) / [metric](output/nq_2026_07_14_10_36_nq-flare-no-rerank-top5-full/metric_score.txt) | [C7](output/nq_2026_07_14_10_36_nq-flare-no-rerank-top5-full/run_command.txt) |
 
@@ -152,8 +160,9 @@
 | NQ | No-RAG | 1.0000 | 0 | 0 | 0 | 0；`0:3610` | 0 / 0 |
 | NQ | Standard RAG | 1.0000 | 1.0000 | 0 | 10 / 10 | 10；`10:3610` | 1 / 1.0000 |
 | NQ | IterRetGen | 3.0000 | 3.0000 | 0 | 15 / 7.8620 | 5；`5:3610` | 3 / 3.0000 |
-| NQ | Full-QD | N/A | N/A | N/A | N/A | N/A | N/A |
-| NQ | IRCoT | N/A | N/A | N/A | N/A | N/A | N/A |
+| NQ | Full-QD | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` |
+| NQ | IRCoT | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` |
+| NQ | Modified Adaptive-k | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` |
 | NQ | EFC-RAG | 2.1008 | 1.1042 | 0.1008 | raw `UNKNOWN` / pool 20.5006 | 10；`10:3610` | 2 / 1.1008 |
 | NQ | FLARE | 5.1582 | 0.1587 | 0 | raw 0.7936 / 非累计 | 评测保存的末次检索均值 0.7078；`0:3099, 5:511` | 5 / 0.1587 |
 
@@ -197,8 +206,9 @@
 | NQ | No-RAG | 70.2950 exact | 9.4291 exact | 0:00:47 / 0.013 | `UNKNOWN` | 无 |
 | NQ | Standard RAG | 1574.7612 exact | 8.3507 exact | 0:12:04 / 0.201 | `UNKNOWN` | 无 |
 | NQ | IterRetGen | 2473.4127 exact | 23.5684 exact | 0:39:31 / 0.657 | `UNKNOWN` | 无；同一 generator 三轮 |
-| NQ | Full-QD | N/A | N/A | N/A | N/A | 预定不测试 |
-| NQ | IRCoT | N/A | N/A | N/A | N/A | 预定不测试 |
+| NQ | Full-QD | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | Table 5 有结果，成本产物待补 |
+| NQ | IRCoT | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | Table 5 有结果，成本产物待补 |
+| NQ | Modified Adaptive-k | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | Table 5 有结果，成本产物待补 |
 | NQ | EFC-RAG | 1580.3798 partial：仅 final，覆盖 47.60% 调用 | 61.9102 partial：probe+final，覆盖 95.20% 调用 | 0:24:08 / 0.401 | `UNKNOWN` | 同一 Llama checkpoint |
 | NQ | FLARE | `UNKNOWN` | `UNKNOWN` | 2:19:15 / 2.314 | `UNKNOWN` | 无额外 checkpoint；需要 logprob |
 
@@ -489,8 +499,8 @@ Router 开发烟测均为 n=200 且实际 `force_route:auto`，只用于证明�
 | No-RAG | 0:01:13 | 0:01:38 | 0:01:07 | 0:00:47 | FS 端到端近似；单卡 |
 | Standard RAG | 0:22:59 | 0:40:54 | wall 0:09:25；active约0:08:44 | 0:12:04 | 单卡；公共检索缓存 |
 | IterRetGen | 2:19:56 | 1:55:28 | 0:34:26 | 0:39:31 | 单卡；HP 无缓存，其余首轮公共缓存+动态 query |
-| Full-QD | 1:35:23 | 2:33:13 | wall 0:38:52；active 0:35:21 | N/A | 单卡；original cache + QD 动态检索 |
-| IRCoT | 1:19:32 | 2:07:06 | 0:31:04 | N/A | HP TP2；2W/MU TP4；wall time 不能当单卡计算量 |
+| Full-QD | 1:35:23 | 2:33:13 | wall 0:38:52；active 0:35:21 | `UNKNOWN` | 单卡；original cache + QD 动态检索；NQ provenance 待补 |
+| IRCoT | 1:19:32 | 2:07:06 | 0:31:04 | `UNKNOWN` | HP TP2；2W/MU TP4；NQ provenance 待补 |
 | EFC-RAG | 0:59:02 | 2:30:47 | wall 1:27:39；active 0:40:26 | 0:24:08 | 单卡；HP 为 EFC cache-only 重放；MU 含47:13人工调度空档 |
 | FLARE | E2E 4:51:01；loop 4:49:24 | E2E 6:14:53；loop 6:12:41 | E2E 1:25:02；loop 1:23:27 | E2E 2:19:15；loop 2:17:38 | 单卡；无原问题初始检索，仅低置信动态 query；加载公共 cache，逐 query hit/miss 未完整记录 |
 
@@ -520,8 +530,8 @@ IRCoT 有合法空字符串预测：HP 8、2W 13、MU 9；它们不是缺失记�
 
 - EFC vs Standard RAG：四数据集均可直接 paired bootstrap。
 - EFC vs IterRetGen：四数据集均可。
-- EFC vs Full-QD：HP、2W、MU 可；NQ 是预定 `N/A`。
-- EFC vs IRCoT：HP、2W、MU 可；NQ 是预定 `N/A`。
+- EFC vs Full-QD：HP、2W、MU 的旧产物可；NQ 待双方新逐样本预测补齐。
+- EFC vs IRCoT：HP、2W、MU 的旧产物可；NQ 待双方新逐样本预测补齐。
 - 应直接 bootstrap 已保存的逐样本 EM/F1，不要用当前工作区代码重新 parse 旧 prediction。Bootstrap 用于 Δ 的置信区间；显著性 p 值另用 paired sign-flip randomization test。多数据集、多基线同时报告 p 值时再做 Holm–Bonferroni 校正。
 
 建议命令模板如下，本次未运行。将 `EFC` 和 `BASE` 替换成表 1.1 对应目录的 `intermediate_data.json`：

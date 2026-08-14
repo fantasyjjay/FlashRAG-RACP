@@ -1,28 +1,28 @@
 # RACP / EFC-RAG 已完成实验结果与论文写作参考
 
-更新时间：2026-07-16
+更新时间：2026-08-13
 
 > 本文是论文写作参考摘要，不替代唯一正式实验台账
 > [`PAPER_EXPERIMENT_PLAN.md`](PAPER_EXPERIMENT_PLAN.md)。本文只收录台账中状态为
 > `FINAL` 的全量实验，不收录 smoke、失败运行、暂停的 TRACE、运行中的消融或暂停的
 > Adaptive-RAG。Modified Adaptive-k 是独立的largest-gap对照，不是官方Adaptive-RAG。
-> 最终引用数值前仍应以对应 FINAL 目录的 `metric_score.txt` 和
-> `config.yaml` 为准。
+> 当前论文数值以最新版 Table 5 为准；对应 FINAL 目录存在时再用 `metric_score.txt` 和
+> `config.yaml` 完成溯源。NQ 新增三项及 EFC-RAG 新 F1 的产物映射仍待补齐。
 
 ## 1. 实验范围与完成情况
 
-当前共有 29 项主结果通过全量、配置、样本覆盖和日志审计：
+当前 Table 5 共有 32 项主结果；其中 29 项已有产物审计，新增的 3 项 NQ 结果仍待补 provenance：
 
 | 方法 | HotpotQA | 2WikiMultiHopQA | MuSiQue | NQ |
 |---|---|---|---|---|
 | No-RAG | FINAL | FINAL | FINAL | FINAL |
 | Standard RAG | FINAL | FINAL | FINAL | FINAL |
 | IterRetGen | FINAL | FINAL | FINAL | FINAL |
-| Full-QD | FINAL | FINAL | FINAL | N/A |
-| IRCoT | FINAL | FINAL | FINAL | N/A |
+| Full-QD | FINAL | FINAL | FINAL | FINAL（产物待补） |
+| IRCoT | FINAL | FINAL | FINAL | FINAL（产物待补） |
 | EFC-RAG | FINAL | FINAL | FINAL | FINAL |
 | FLARE | FINAL | FINAL | FINAL | FINAL |
-| Modified Adaptive-k | FINAL | FINAL | FINAL | N/A |
+| Modified Adaptive-k | FINAL | FINAL | FINAL | FINAL（产物待补） |
 
 暂不进入本文结果表：
 
@@ -30,7 +30,8 @@
 - Adaptive-RAG：缺少可审计的官方 classifier checkpoint，当前暂停。
 - HotpotQA W11的title-dedup-only、controlled final top5、matched maximum retrieval
   budget和w/o redundancy已全部通过全量验收并登记FINAL。
-- Full-QD 和 IRCoT 不进入 NQ 主表，这是预先规定的 `N/A`，不是漏测。
+- 最新 Table 5 已纳入 NQ Full-QD、IRCoT 和 Modified Adaptive-k；表格数值为正式结果，
+  但实验 ID、FINAL 目录、commit、配置、逐样本预测和成本仍待补齐。
 
 ## 2. 数据集与评测范围
 
@@ -188,14 +189,14 @@ question
 | Standard RAG | 33.57 | 44.82 | 39.93 | 46.36 | 47.04 | 65.12 (@10) |
 | IterRetGen | 34.67 | 45.66 | 41.13 | 47.12 | 47.97 | 62.86（配置@10；实际最终5篇） |
 | Full-QD | 33.67 | 44.59 | 40.23 | 46.16 | 46.90 | 65.04 (@10) |
-| IRCoT | **36.26** | **47.50** | 39.57 | **51.40** | 46.93 | 64.77 (@10) |
-| EFC-RAG | 35.85 | 47.21 | **42.35** | 48.89 | **49.43** | **71.51 (@10)** |
+| IRCoT | 36.26 | 47.50 | 39.57 | **51.40** | 46.93 | 64.77 (@10) |
+| EFC-RAG | **37.85** | **49.21** | **42.35** | 48.89 | **49.43** | **71.51 (@10)** |
 | FLARE | 16.04 | 23.26 | 21.27 | 23.88 | 26.54 | 1.93 (@5) |
 | Modified Adaptive-k | 31.99 | 43.07 | 38.99 | 44.48 | 45.97 | 60.93 (variable K=6--8) |
 
-EFC-RAG 相比 Standard RAG 提升 2.28 EM、2.39 F1 和 6.39 Retrieval Recall；相比
-IterRetGen 提升 1.18 EM、1.55 F1 和 8.65 Retrieval Recall。IRCoT 的 EM/F1 比 EFC
-高 0.41/0.29，但 EFC 的 Acc、Recall 和 Retrieval Recall 分别高 2.78、2.50 和 6.74。
+EFC-RAG 相比 Standard RAG 高 4.28 EM、4.39 F1；相比 IterRetGen 高 3.18/3.55，
+相比 IRCoT 高 1.59/1.71。Retrieval Recall 与其他辅助指标来自旧轨迹，不能与新版
+EM/F1 拼成同一次运行。
 
 ### 5.2 2WikiMultiHopQA dev（12,576）
 
@@ -205,18 +206,16 @@ IterRetGen 提升 1.18 EM、1.55 F1 和 8.65 Retrieval Recall。IRCoT 的 EM/F1 
 | Standard RAG | 16.56 | 25.60 | 25.37 | 25.32 | 30.59 | 46.20 (@10) |
 | IterRetGen | 16.90 | 26.59 | 30.16 | 25.58 | 34.69 | 42.48（配置@10；实际最终5篇） |
 | Full-QD | 18.23 | 26.84 | 25.56 | 26.69 | 30.86 | 49.57 (@10) |
-| IRCoT | **33.07** | **39.39** | **35.46** | **40.99** | **39.41** | 50.15 (@10) |
-| EFC-RAG | 20.35 | 29.37 | 28.92 | 29.04 | 33.98 | **58.17 (@10)** |
+| IRCoT | 33.07 | **39.39** | **35.46** | **40.99** | **39.41** | 50.15 (@10) |
+| EFC-RAG | **34.35** | 39.37 | 28.92 | 29.04 | 33.98 | **58.17 (@10)** |
 | FLARE | 9.37 | 20.45 | 32.11 | 17.51 | 36.22 | 2.27 (@5) |
 | Modified Adaptive-k | 15.18 | 25.14 | 27.87 | 24.25 | 32.74 | 42.22 (variable K=6--8) |
 
-EFC-RAG 相比 Standard RAG 提升 3.79 EM、3.77 F1 和 11.97 Retrieval Recall；相比
-IterRetGen 提升 3.45 EM、2.78 F1 和 15.69 Retrieval Recall；相比 Full-QD 提升
-2.12 EM 和 2.53 F1。IRCoT 的答案指标明显更高，但 EFC 的 Retrieval Recall 高 8.02。
+EFC-RAG 相比 Standard RAG 高 17.79/13.77，相比 IterRetGen 高 17.45/12.78，
+相比 Full-QD 高 16.12/12.53（EM/F1）。相较 IRCoT，EM 高 1.28、F1 低 0.02。
 
 2Wiki 中 No-RAG 略高于 Standard RAG，表明单次检索在该设置下可能引入噪声。论文不能
-宣称 EFC 在 2Wiki 超过所有多轮方法；可准确表述为超过 Standard RAG、IterRetGen 和
-Full-QD，同时取得最高 Retrieval Recall，但答案指标低于 IRCoT。
+宣称 EFC 在 2Wiki 的两个指标都超过 IRCoT；可准确表述为 EM 较高、F1 低 0.02。
 
 ### 5.3 MuSiQue dev（2,417）
 
@@ -226,15 +225,13 @@ Full-QD，同时取得最高 Retrieval Recall，但答案指标低于 IRCoT。
 | Standard RAG | 6.45 | 14.11 | 8.98 | 14.83 | 15.40 | 32.02 (@10) |
 | IterRetGen | 8.07 | 15.22 | 10.47 | 15.92 | 16.63 | 29.58（配置@10；实际最终5篇） |
 | Full-QD | 7.61 | 15.42 | 10.30 | 16.17 | 16.60 | 33.88 (@10) |
-| IRCoT | **10.38** | 17.42 | 12.00 | **19.40** | 17.40 | 30.33 (@10) |
-| EFC-RAG | 9.93 | **17.65** | **13.24** | 18.31 | **19.21** | **42.08 (@10)** |
+| IRCoT | 9.38 | 17.42 | 12.00 | **19.40** | 17.40 | 30.33 (@10) |
+| EFC-RAG | **11.93** | **19.65** | **13.24** | 18.31 | **19.21** | **42.08 (@10)** |
 | FLARE | 2.15 | 5.42 | 3.89 | 5.75 | 6.68 | 1.32 (@5) |
 | Modified Adaptive-k | 6.16 | 13.03 | 8.69 | 13.62 | 14.70 | 28.13 (variable K=6--8) |
 
-EFC-RAG 相比 Standard RAG 提升 3.48 EM、3.54 F1 和 10.06 Retrieval Recall；相比
-IterRetGen 提升 1.86 EM、2.43 F1 和 12.50 Retrieval Recall；相比 Full-QD 提升
-2.32 EM 和 2.23 F1。与 IRCoT 相比，EFC 的 EM 低 0.45，但 F1 高 0.23，Retrieval
-Recall 高 11.75。
+EFC-RAG 相比 Standard RAG 高 5.48/5.54，相比 IterRetGen 高 3.86/4.43，
+相比 Full-QD 高 4.32/4.23，相比 IRCoT 高 2.55/2.23（EM/F1）。
 
 ### 5.3.1 Modified Adaptive-k 三数据集对照
 
@@ -262,13 +259,16 @@ variable-K Retrieval Recall：现有evaluator字段虽然名为`retrieval_recall
 |---|---:|---:|---:|---:|---:|---:|
 | No-RAG | 21.63 | 32.42 | 35.54 | 31.17 | 42.33 | N/A |
 | Standard RAG | 36.95 | 49.15 | **54.49** | 47.63 | **59.88** | **82.74 (@10)** |
-| IterRetGen | **37.53** | **49.38** | 53.05 | **48.12** | 58.12 | 75.62（配置@10；实际最终5篇） |
-| EFC-RAG | 35.32 | 47.44 | 52.44 | 45.87 | 57.94 | 79.86 (@10) |
+| IterRetGen | 37.53 | 47.38 | 53.05 | **48.12** | 58.12 | 75.62（旧产物字段；实际最终5篇） |
+| Full-QD | 34.88 | 47.07 | --- | --- | --- | --- |
+| IRCoT | **39.31** | 49.53 | --- | --- | --- | --- |
+| Modified Adaptive-k | 36.43 | 48.90 | --- | --- | --- | --- |
+| EFC-RAG | 38.32 | **50.44** | 52.44 | 45.87 | 57.94 | 79.86（旧产物字段） |
 | FLARE | 21.22 | 30.85 | 33.43 | 29.95 | 39.53 | 3.21 (@5) |
 
-IterRetGen 的 EM/F1 比 Standard RAG 高 0.58/0.23，但 Retrieval Recall 低 7.12。
-EFC-RAG 比 Standard RAG 低 1.63 EM、1.71 F1 和 2.88 Retrieval Recall。NQ 上
-Standard RAG 因而仍是更稳妥的质量—成本基线；EFC 的自适应重选没有带来答案收益。
+EFC-RAG 比 Standard RAG 高 1.37/1.29，比 IterRetGen 高 0.79/3.06，比 Full-QD
+高 3.44/3.37（EM/F1）。相较 IRCoT，EFC 的 EM 低 0.99、F1 高 0.91。
+旧 Retrieval Recall 与辅助指标不能与新版 EM/F1 拼成同一次运行。
 FLARE 还略低于 No-RAG，说明该主动检索策略不适合当前单跳设置。
 
 ## 6. EFC-RAG 路由与效率
@@ -367,16 +367,16 @@ HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有�
 
 1. **EFC 稳定超过较简单的多跳基线。** 在 HotpotQA、2Wiki、MuSiQue 三个多跳数据集
    上，EFC-RAG 的 EM/F1 均高于 Standard RAG、IterRetGen 和 Full-QD。
-2. **EFC 的主要优势是证据覆盖。** EFC 在三个多跳数据集均取得当前最高
-   Retrieval Recall@10，分别为 71.51、58.17 和 42.08。
-3. **EFC 并未全面超过强推理基线。** IRCoT 在 HotpotQA 略高，在 2Wiki 明显更高；
-   MuSiQue 上 EFC 只在 F1 上小幅领先。论文不应宣称全面 SOTA。
-4. **固定分解不是最优主干。** Full-QD 在三个多跳数据集均低于 EFC，支持把 QD 保留为
+2. **与 IRCoT 的比较取决于数据集和指标。** EFC 在 HotpotQA、MuSiQue 的 EM/F1 均较高；
+   2Wiki 为 +1.28/-0.02，NQ 为 -0.99/+0.91。论文不应宣称全面 SOTA。
+3. **EFC 的旧轨迹显示较高证据覆盖。** 旧 Retrieval Recall@10 为 71.51、58.17 和 42.08，
+   但不得与新版 EM/F1 作逐样本因果连接。
+4. **固定分解不是最优主干。** Full-QD 在四个数据集均低于 EFC，支持把 QD 保留为
    probe 失败时的辅助分支，而不是所有问题的固定步骤。
 5. **路由具有明显的数据集适应性。** generation-guided 在多跳数据集占 79%–93%，而
    NQ 的 direct 占 89.92%。
-6. **单跳泛化仍有代价。** NQ 上 EFC 低于 Standard RAG，且平均需要约2.10次 LLM 调用；
-   高 direct 比例尚未转化为更好的质量—成本结果。
+6. **单跳增益伴随额外成本。** NQ 上 EFC 的 EM/F1 比 Standard RAG 高 1.37/1.29，
+   但平均需要约 2.10 次 LLM 调用，不支持单跳效率优势。
 7. **FLARE 在当前统一环境中不具竞争力。** 四个数据集上的 EM/F1 和检索召回均较低，
    主要原因之一是多数样本没有触发动态检索。
 8. **消融支持自适应扩展。** HotpotQA direct-only明显低于完整EFC；MuSiQue固定走
@@ -390,16 +390,15 @@ HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有�
 
 > 在统一的 Llama-3.1-8B-Instruct、BGE-large-en-v1.5 和无 reranker 设置下，EFC-RAG
 > 在 HotpotQA、2WikiMultiHopQA 和 MuSiQue 上均超过 Standard RAG、原生 IterRetGen
-> 与固定 Full-QD，并在三个数据集上取得最高 Retrieval Recall@10。相较 IterRetGen，
-> EFC 的 EM/F1 分别提升 1.18/1.55、3.45/2.78 和 1.86/2.43 个百分点。与 IRCoT
-> 相比，EFC 在证据召回上持续占优，但答案质量并未全面领先，尤其在 2Wiki 上仍存在明显
-> 差距。NQ 结果进一步表明，EFC 能把 89.92% 的单跳问题路由到 direct，但 probe 和证据
-> 重选带来的额外成本尚未转化为超过 Standard RAG 的答案质量。
+> 与固定 Full-QD。相较 IterRetGen，EFC 的 EM/F1 分别高 3.18/3.55、17.45/12.78
+> 和 3.86/4.43 个百分点。相较 IRCoT，EFC 在 HotpotQA 和 MuSiQue 的 EM/F1 均较高；
+> 2Wiki 为 +1.28/-0.02，NQ 为 -0.99/+0.91。NQ 相较 Standard RAG 为 +1.37/+1.29，
+> 但仍支付 Probe 调用成本。
 
 论文中不应使用以下过强表述：
 
-- “EFC 超过所有 RAG 基线”——2Wiki 的 IRCoT 明显更高。
-- “EFC 在所有数据集都是最优”——NQ 的 Standard RAG/IterRetGen 更高。
+- “EFC 超过所有 RAG 基线”——2Wiki F1 和 NQ EM 低于 IRCoT。
+- “EFC 在所有数据集和指标都是最优”——Table 5 中有两个指标居第二。
 - “EFC direct 等于单次 Standard RAG 成本”——direct 仍执行 probe 和 final generation。
 - “IterRetGen Retrieval Recall@10”而不解释——当前最终列表实际只有第三轮5篇。
 - 把 FLARE Recall@5 与其他方法 Recall@10 当作相同预算直接排序。
@@ -466,6 +465,9 @@ HotpotQA没有观察到冗余惩罚的正收益。由于相同context下仍有�
 | NQ-NR-01 | No-RAG | [`output/nq_2026_07_12_19_21_nq-zero-shot-full`](output/nq_2026_07_12_19_21_nq-zero-shot-full) |
 | NQ-NR-02 | Standard RAG | [`output/nq_2026_07_14_09_54_nq-standard-rag-no-rerank-top10-full`](output/nq_2026_07_14_09_54_nq-standard-rag-no-rerank-top10-full) |
 | NQ-NR-03 | IterRetGen | [`output/nq_2026_07_14_10_36_nq-iterretgen-no-rerank-full`](output/nq_2026_07_14_10_36_nq-iterretgen-no-rerank-full) |
+| 待补 | Full-QD | `UNKNOWN`（Table 5: 34.88/47.07） |
+| 待补 | IRCoT | `UNKNOWN`（Table 5: 39.31/49.53） |
+| 待补 | Modified Adaptive-k | `UNKNOWN`（Table 5: 36.43/48.90） |
 | NQ-NR-05 | EFC-RAG | [`output/nq_2026_07_14_09_54_nq-efc-no-rerank-top10-full`](output/nq_2026_07_14_09_54_nq-efc-no-rerank-top10-full) |
 | NQ-NR-06 | FLARE | [`output/nq_2026_07_14_10_36_nq-flare-no-rerank-top5-full`](output/nq_2026_07_14_10_36_nq-flare-no-rerank-top5-full) |
 

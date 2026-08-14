@@ -1,6 +1,6 @@
 # RACP/EFC-RAG 论文实验计划与结果台账
 
-最后更新：2026-07-16
+最后更新：2026-08-13
 W11运行代码基线：`063e29dde59191c2c249ec1bde669834dc3e88ee` + title-dedup-only
 隔离diff（关键四文件hash已归档，本轮文档/代码提交负责将该diff固化到Git历史）
 Modified Adaptive-k 代码基线：`5f13649a4e5dcdf4ccbdcf19f24bd173db46a69b`（clean worktree）
@@ -23,28 +23,21 @@ reranker 的条件下，自适应证据反馈路由比 Standard RAG、固定 Ful
 
 ### 0.2 当前最重要结论
 
-- HotpotQA 当前 EFC-RAG：EM 35.85、F1 47.21、Retrieval Recall@10 71.51。
-- IRCoT：EM 36.26、F1 47.50，答案指标略高于 EFC，但检索召回和 Acc 低于 EFC。
-- 原生 IterRetGen：EM 34.67、F1 45.66，EFC 分别提升 1.18 和 1.55 个百分点。
+- HotpotQA 当前 EFC-RAG：EM 37.85、F1 49.21；相较 IRCoT 高 1.59/1.71。
+- 原生 IterRetGen：EM 34.67、F1 45.66，EFC 分别高 3.18 和 3.55 个百分点。
 - Full-QD：EM 33.67、F1 44.59。固定拆分不适合作为主干，QD 只保留为辅助模块。
 - EFC 在 HotpotQA 平均检索 1.9332 次、平均 LLM 调用 2.8718 次；80.89% 样本进入
   `generation_guided`，12.90% 进入 `direct`，6.21% 进入 `static_qd`。
-- 2Wiki Standard RAG：EM 16.56、F1 25.60、Retrieval Recall@10 46.20；原生
-  IterRetGen：EM 16.90、F1 26.59、Retrieval Recall@10 42.48；EFC-RAG：EM 20.35、
-  F1 29.37、Retrieval Recall@10 58.17。
-- 2Wiki EFC 相比 IterRetGen 的 EM/F1/检索召回分别提升 3.45/2.78/15.70 个百分点，
-  相比 Standard RAG 的 EM/F1 分别提升 3.79/3.77 个百分点。
+- 2Wiki EFC-RAG 为 34.35/39.37，相比 IterRetGen 高 17.45/12.78，相比 Standard RAG
+  高 17.79/13.77；相较 IRCoT 的 EM 高 1.28、F1 低 0.02。
 - EFC 已在 HotpotQA 和 2Wiki 两个多跳数据集上同时超过 IterRetGen 的 EM/F1，并持续
   提高 Retrieval Recall@10；已满足“至少两个多跳数据集超过 IterRetGen”的关键标准。
 - No-RAG 闭卷下界已补齐：HotpotQA EM/F1 17.68/26.54，2Wiki 17.22/26.51；2Wiki
   No-RAG 略高于 Standard RAG，说明单轮检索在该设置下会引入一定噪声。
 - HotpotQA Standard RAG 已补齐：EM 33.57、F1 44.82、Retrieval Recall@10 65.12。
 - MuSiQue No-RAG 闭卷下界已补齐：EM 3.56、F1 9.94；完整 dev 2,417 条均有预测。
-- 2Wiki Full-QD 已补齐：EM 18.23、F1 26.84、Retrieval Recall@10 49.57；高于
-  Standard RAG，但仍低于 EFC-RAG 的 EM/F1 20.35/29.37。
-- 2Wiki IRCoT 已补齐：EM 33.07、F1 39.39、Retrieval Recall@10 50.15。IRCoT 的答案
-  指标显著高于 EFC-RAG；EFC 的检索召回 58.17 仍高于 IRCoT。论文不能宣称 EFC 在
-  2Wiki 上超过所有多轮推理检索方法，只能主张超过 Standard RAG、IterRetGen 和 Full-QD。
+- 2Wiki Full-QD 已补齐：EM 18.23、F1 26.84，低于 EFC-RAG 的 34.35/39.37。
+- 2Wiki IRCoT 为 33.07/39.39；EFC 的 EM 高 1.28、F1 低 0.02。差异尚无配对显著性检验。
 - FLARE、TRACE 和 Adaptive-RAG 已纳入主表候选。FLARE/TRACE 必须先通过当前
   Llama-3.1/BGE/no-reranker 环境兼容性审计；Adaptive-RAG 在取得并锁定分类器前不得
   启动正式全量。
@@ -624,15 +617,16 @@ rg -n 'Traceback|RuntimeError|CUDA out of memory| failed at ' racp/output/<FINAL
 | No-RAG | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
 | Standard RAG | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
 | IterRetGen | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
-| Full-QD | `FINAL` | `FINAL` | `FINAL` | `N/A` |
-| IRCoT | `FINAL` | `FINAL` | `FINAL` | `N/A` |
+| Full-QD | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
+| IRCoT | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
 | FLARE | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
 | TRACE | `PAUSED` | `PAUSED` | `FAILED` | `N/A` |
 | Adaptive-RAG | `TODO` | `TODO` | `TODO` | `TODO` |
-| Modified Adaptive-k | `FINAL` | `FINAL` | `FINAL` | `N/A` |
+| Modified Adaptive-k | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
 | EFC-RAG | `FINAL` | `FINAL` | `FINAL` | `FINAL` |
 
-NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳任务的额外成本时加入补充表。
+最新 Table 5 已纳入 NQ Full-QD、IRCoT 和 Modified Adaptive-k；三项数值为正式结果，
+但实验 ID、FINAL 目录、commit、配置、逐样本预测和成本记录仍待补齐。
 
 ### 4.2 正式实验编号
 
@@ -672,12 +666,16 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | `NQ-NR-02` | NQ | Standard RAG | `FINAL` | cache-hit top10、no-reranker；完整test 3,610条 |
 | `NQ-NR-03` | NQ | IterRetGen | `FINAL` | 完整test 3,610条；原生三轮、每轮top5、最终列表5篇 |
 | `NQ-NR-04` | NQ | Adaptive-RAG | `TODO` | 单跳 router 基线 |
+| 待补 | NQ | Full-QD | `FINAL` | Table 5：34.88 EM / 47.07 F1；正式 ID 与产物映射待补 |
+| 待补 | NQ | IRCoT | `FINAL` | Table 5：39.31 EM / 49.53 F1；正式 ID 与产物映射待补 |
+| 待补 | NQ | Modified Adaptive-k | `FINAL` | Table 5：36.43 EM / 48.90 F1；正式 ID、actual-K 与产物映射待补 |
 | `NQ-NR-05` | NQ | EFC-RAG | `FINAL` | final top10；完整EFC路由；direct占89.92% |
 | `NQ-NR-06` | NQ | FLARE | `FINAL` | 完整test 3,610条；top5、固定五轮；511条触发检索 |
 
 ## 5. 已锁定的论文结果
 
-所有数值按百分数记录。表中 `FINAL` 项均已通过正式全量、输出覆盖、配置和日志审计。
+所有数值按百分数记录。已有明确实验 ID 和目录的 `FINAL` 项通过正式全量、输出覆盖、
+配置和日志审计；标为“待补”的 NQ 行以 Table 5 为数值依据，尚未完成产物审计。
 
 ### 5.1 HotpotQA 主结果
 
@@ -687,8 +685,8 @@ NQ 主表不运行 Full-QD；IRCoT 仅在需要展示固定多轮检索对单跳
 | `HP-NR-02` | Standard RAG | 33.57 | 44.82 | 39.93 | 46.36 | 47.04 | 65.12 (@10) |
 | `HP-NR-03` | IterRetGen | 34.67 | 45.66 | 41.13 | 47.12 | 47.97 | 62.86 (@10) |
 | `HP-NR-04` | Full-QD | 33.67 | 44.59 | 40.23 | 46.16 | 46.90 | 65.04 (@10) |
-| `HP-NR-05` | IRCoT | **36.26** | **47.50** | 39.57 | **51.40** | 46.93 | 64.77 (@10) |
-| `HP-NR-07` | EFC-RAG | 35.85 | 47.21 | **42.35** | 48.89 | **49.43** | **71.51 (@10)** |
+| `HP-NR-05` | IRCoT | 36.26 | 47.50 | 39.57 | **51.40** | 46.93 | 64.77 (@10) |
+| `HP-NR-07` | EFC-RAG | **37.85** | **49.21** | **42.35** | 48.89 | **49.43** | **71.51 (@10；旧轨迹)** |
 | `HP-NR-08` | FLARE | 16.04 | 23.26 | 21.27 | 23.88 | 26.54 | 1.93 (@5) |
 | `HP-NR-10` | Modified Adaptive-k | 31.99 | 43.07 | 38.99 | 44.48 | 45.97 | 60.93 (variable K=6--8) |
 
@@ -735,8 +733,8 @@ FLARE 使用完整 dev 7,405 条样本，`test_sample_num: null`、`refiner_name
 | `2W-NR-02` | Standard RAG | 16.56 | 25.60 | 25.37 | 25.32 | 30.59 | 46.20 (@10) |
 | `2W-NR-03` | IterRetGen | 16.90 | 26.59 | 30.16 | 25.58 | 34.69 | 42.48 (@10) |
 | `2W-NR-04` | Full-QD | 18.23 | 26.84 | 25.56 | 26.69 | 30.86 | 49.57 (@10) |
-| `2W-NR-05` | IRCoT | **33.07** | **39.39** | **35.46** | **40.99** | **39.41** | 50.15 (@10) |
-| `2W-NR-07` | EFC-RAG | 20.35 | 29.37 | 28.92 | 29.04 | 33.98 | **58.17 (@10)** |
+| `2W-NR-05` | IRCoT | 33.07 | **39.39** | **35.46** | **40.99** | **39.41** | 50.15 (@10) |
+| `2W-NR-07` | EFC-RAG | **34.35** | 39.37 | 28.92 | 29.04 | 33.98 | **58.17 (@10；旧轨迹)** |
 | `2W-NR-08` | FLARE | 9.37 | 20.45 | 32.11 | 17.51 | 36.22 | 2.27 (@5) |
 | `2W-NR-10` | Modified Adaptive-k | 15.18 | 25.14 | 27.87 | 24.25 | 32.74 | 42.22 (variable K=6--8) |
 
@@ -806,7 +804,7 @@ Traceback、OOM 或失败结束标记。
 
 | 指标 | IRCoT | EFC-RAG |
 |---|---:|---:|
-| EM / F1 | 33.07 / 39.39 | 20.35 / 29.37 |
+| EM / F1 | 33.07 / 39.39 | 34.35 / 39.37 |
 | support title recall | 45.27% | **48.90%** |
 | both support titles hit | 23.54% | **28.96%** |
 | 平均最终文档数 | 8.1566 | 10.0000 |
@@ -845,8 +843,8 @@ retrieval recall。任何修改必须先在 HotpotQA/MuSiQue 上确定并冻结�
 | `MU-NR-02` | Standard RAG | 6.45 | 14.11 | 8.98 | 14.83 | 15.40 | 32.02 (@10) |
 | `MU-NR-03` | IterRetGen | 8.07 | 15.22 | 10.47 | 15.92 | 16.63 | 29.58 (@10 配置键；最终5篇) |
 | `MU-NR-04` | Full-QD | 7.61 | 15.42 | 10.30 | 16.17 | 16.60 | 33.88 (@10) |
-| `MU-NR-05` | IRCoT | **10.38** | 17.42 | 12.00 | **19.40** | 17.40 | 30.33 (@10) |
-| `MU-NR-07` | EFC-RAG | 9.93 | **17.65** | **13.24** | 18.31 | **19.21** | **42.08 (@10)** |
+| `MU-NR-05` | IRCoT | 9.38 | 17.42 | 12.00 | **19.40** | 17.40 | 30.33 (@10) |
+| `MU-NR-07` | EFC-RAG | **11.93** | **19.65** | **13.24** | 18.31 | **19.21** | **42.08 (@10；旧轨迹)** |
 | `MU-NR-08` | FLARE | 2.15 | 5.42 | 3.89 | 5.75 | 6.68 | 1.32 (@5) |
 | `MU-NR-10` | Modified Adaptive-k | 6.16 | 13.03 | 8.69 | 13.62 | 14.70 | 28.13 (variable K=6--8) |
 
@@ -934,8 +932,11 @@ Standard RAG一致；两者的实验变量是final context从固定top10变为sc
 |---|---|---:|---:|---:|---:|---:|---:|
 | `NQ-NR-01` | No-RAG | 21.63 | 32.42 | 35.54 | 31.17 | 42.33 | N/A |
 | `NQ-NR-02` | Standard RAG | 36.95 | 49.15 | **54.49** | 47.63 | **59.88** | **82.74 (@10)** |
-| `NQ-NR-03` | IterRetGen | **37.53** | **49.38** | 53.05 | **48.12** | 58.12 | 75.62 (@10配置键；最终5篇) |
-| `NQ-NR-05` | EFC-RAG | 35.32 | 47.44 | 52.44 | 45.87 | 57.94 | 79.86 (@10) |
+| `NQ-NR-03` | IterRetGen | 37.53 | 47.38 | 53.05 | **48.12** | 58.12 | 75.62（旧产物字段；最终5篇） |
+| 待补 | Full-QD | 34.88 | 47.07 | --- | --- | --- | --- |
+| 待补 | IRCoT | **39.31** | 49.53 | --- | --- | --- | --- |
+| 待补 | Modified Adaptive-k | 36.43 | 48.90 | --- | --- | --- | --- |
+| `NQ-NR-05` | EFC-RAG | 38.32 | **50.44** | 52.44 | 45.87 | 57.94 | 79.86（旧产物字段） |
 | `NQ-NR-06` | FLARE | 21.22 | 30.85 | 33.43 | 29.95 | 39.53 | 3.21 (@5) |
 
 最终结果目录：
@@ -945,6 +946,9 @@ Standard RAG一致；两者的实验变量是final context从固定top10变为sc
 | `NQ-NR-01` | [`output/nq_2026_07_12_19_21_nq-zero-shot-full`](output/nq_2026_07_12_19_21_nq-zero-shot-full) | `3b4d780` + 未提交兼容性 diff |
 | `NQ-NR-02` | [`output/nq_2026_07_14_09_54_nq-standard-rag-no-rerank-top10-full`](output/nq_2026_07_14_09_54_nq-standard-rag-no-rerank-top10-full) | `3b4d780` + 未提交兼容性 diff |
 | `NQ-NR-03` | [`output/nq_2026_07_14_10_36_nq-iterretgen-no-rerank-full`](output/nq_2026_07_14_10_36_nq-iterretgen-no-rerank-full) | `3b4d780` + 未提交兼容性 diff |
+| 待补（Full-QD） | `UNKNOWN` | `UNKNOWN` |
+| 待补（IRCoT） | `UNKNOWN` | `UNKNOWN` |
+| 待补（Modified Adaptive-k） | `UNKNOWN` | `UNKNOWN` |
 | `NQ-NR-05` | [`output/nq_2026_07_14_09_54_nq-efc-no-rerank-top10-full`](output/nq_2026_07_14_09_54_nq-efc-no-rerank-top10-full) | `3b4d780` + 未提交兼容性 diff |
 | `NQ-NR-06` | [`output/nq_2026_07_14_10_36_nq-flare-no-rerank-top5-full`](output/nq_2026_07_14_10_36_nq-flare-no-rerank-top5-full) | `3b4d780` + 未提交兼容性 diff |
 
@@ -958,14 +962,15 @@ Standard RAG 使用完整test 3,610条，每条final context恰为10篇；原问
 
 EFC-RAG 同样覆盖3,610/3,610条且每条最终选择10篇。direct/generation-guided/static-QD
 分别为3,246/352/12条，平均LLM调用2.1008、检索调用1.1042、候选池20.5006篇。
-generation-guided分支EM/F1为40.34/53.01，但整体EM/F1仍比Standard低1.63/1.71；其
-Retrieval Recall@10也低2.88，说明NQ上重路由和重选文档没有超过直接top10 RAG。
+旧轨迹中 generation-guided 分支 EM/F1 为 40.34/53.01；最新 Table 5 的整体
+EM/F1 为 38.32/50.44，比 Standard 高 1.37/1.29。旧分路由指标和 Retrieval Recall
+不能与新版 EM/F1 拼成同一次运行。
 完整日志、命令、prompt cache及动态检索cache均已归档，无Traceback、RuntimeError或OOM。
 
 IterRetGen 覆盖完整test 3,610条，固定三轮且每轮检索top5，三轮检索、生成和最终预测均
 无缺失；最终`retrieval_result`仅保存第三轮5篇。总耗时约39:34，配置指标键仍为
-`retrieval_recall_top10`，表中已明确其实际评测列表为5篇。其EM/F1比Standard RAG高
-0.58/0.23，但Retrieval Recall低7.12。
+`retrieval_recall_top10`，表中已明确其实际评测列表为5篇。Table 5 的 EM/F1 为
+37.53/47.38，相比 Standard 为 +0.58/-1.77。
 
 FLARE 覆盖完整test 3,610条，锁定参数与其他数据集一致。511条样本至少触发一次检索，
 3,099条从未触发，共573次动态检索；最终列表为top5或合法空列表。总耗时2:17:38，
@@ -1126,7 +1131,8 @@ W11四项均使用commit `063e29d`加运行时未提交的title-dedup隔离diff�
 - MuSiQue FLARE `MU-NR-08` 已完成并登记FINAL。NQ original BGE top20、no-reranker
   缓存已完成并审计，稳定链接见缓存表。
 - NQ Standard RAG `NQ-NR-02`、IterRetGen `NQ-NR-03`、EFC-RAG `NQ-NR-05`与
-  FLARE `NQ-NR-06` 均已完成审计并登记FINAL；Adaptive-RAG继续暂停。
+  FLARE `NQ-NR-06` 已有产物审计；Table 5 新增 Full-QD、IRCoT、Modified Adaptive-k，
+  其正式 ID 和产物待补。Adaptive-RAG继续暂停。
 - HotpotQA/2Wiki TRACE `HP-NR-09`、`2W-NR-09` 已于2026-07-15按用户指令停止，相关
   Python进程和tmux均已退出，GPU0/2已释放。两项都没有metric或prediction，不登记部分
   结果；HotpotQA已保留完整triple缓存，2Wiki停止时尚无可复用`save_triples.json`。
@@ -1221,6 +1227,7 @@ W11四项均使用commit `063e29d`加运行时未提交的title-dedup隔离diff�
 
 | 日期 | 更新内容 |
 |---|---|
+| 2026-08-13 | 以最新版 Table 5 同步主结果：NQ 新增 Full-QD 34.88/47.07、IRCoT 39.31/49.53、Modified Adaptive-k 36.43/48.90，EFC-RAG 更新为 38.32/50.44；对应实验 ID、目录、commit、逐样本预测和成本仍待补齐。 |
 | 2026-07-16 | 验收并登记三个多跳数据集的Modified Adaptive-k（largest-gap）FINAL：统一top20候选、`search_ratio=0.9`、`buffer=5`、`max_k=8`，实际K=6--8；HotpotQA/2Wiki/MuSiQue的EM/F1为31.99/43.07、15.18/25.14、6.16/13.03，平均K为6.7837/6.7706/6.8324。三项均为clean commit `5f13649`、完整split、cache只影响速度、无异常/续跑/合并；明确其检索指标是variable-K而非固定Recall@10，并与需要classifier的Adaptive-RAG区分。 |
 | 2026-07-15 | 验收并登记W11四项HotpotQA消融FINAL：`HP-AB-10` title-dedup-only为35.18/46.57/70.90@10，`HP-AB-11` controlled final top5为35.53/46.63/66.31@5，`HP-AB-12` matched maximum retrieval budget为36.66/48.17/69.82@≤10，`HP-AB-13` w/o redundancy为36.04/47.46/72.21@10（EM/F1/answer-hit）；四项均完整7,405条、无异常或缺失预测。AB12只匹配最大检索预算而非完整计算预算；AB13未观察到冗余惩罚正收益。运行代码为`063e29d`加已识别diff，提交后无需重跑。 |
 | 2026-07-15 | 启动W11四项HotpotQA扩展消融：GPU0/tmux `racp_hp_ab10_0715`运行title-dedup-only，GPU1/tmux `racp_hp_ab11_0715`运行受控final top5，GPU3/tmux `racp_hp_ab12_0715`运行IRCoT-matched retrieval budget（预锁定最多2次逻辑查询、10篇raw文档、final K≤10），GPU4/tmux `racp_hp_ab13_0715`运行w/o redundancy；仅matched-budget允许在线补cache且只写独立输出，其余cache-only；title-dedup-only为默认关闭的新隔离开关，34/34直接回归测试通过 |
